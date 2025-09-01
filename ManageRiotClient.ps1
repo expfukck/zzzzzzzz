@@ -1,58 +1,58 @@
-<#
+ï»¿<#
 .SYNOPSIS
-    Ò»¸öÈ«ÄÜµÄÓÎÏ·¿Í»§¶Ë¹ÜÀí½Å±¾¡£ËüÄÜ´Ó WebDAV ÏÂÔØ×ÊÔ´£¨´ø½ø¶ÈÌõ£©£¬×Ô¶¯ËÑË÷¡¢ÑéÖ¤¡¢ÕûÀí
-    Riot Games ¿Í»§¶Ë£¬´´½¨×ÀÃæ¿ì½İ·½Ê½£¬ÖØÖÃÅäÖÃÎÄ¼ş£¬²¢ÔÚ×îºó´ò¿ªÖ¸¶¨ÍøÒ³¡£
+    ä¸€ä¸ªå…¨èƒ½çš„æ¸¸æˆå®¢æˆ·ç«¯ç®¡ç†è„šæœ¬ã€‚å®ƒèƒ½ä» WebDAV ä¸‹è½½èµ„æºï¼ˆå¸¦è¿›åº¦æ¡ï¼‰ï¼Œè‡ªåŠ¨æœç´¢ã€éªŒè¯ã€æ•´ç†
+    Riot Games å®¢æˆ·ç«¯ï¼Œåˆ›å»ºæ¡Œé¢å¿«æ·æ–¹å¼ï¼Œé‡ç½®é…ç½®æ–‡ä»¶ï¼Œå¹¶åœ¨æœ€åæ‰“å¼€æŒ‡å®šç½‘é¡µã€‚
 
 .DESCRIPTION
-    ´Ë½Å±¾°´Ë³ĞòÖ´ĞĞÒÔÏÂ²Ù×÷£º
-    1. [¿ÉÑ¡] WebDAV ÏÂÔØ:
-       - Í³Ò»Ò»´ÎĞÔÊäÈëÆ¾¾İ¡£
-       - ÏÂÔØÖ¸¶¨µÄÎÄ¼ş¼ĞºÍµ¥¸öÎÄ¼şµ½×ÀÃæ£¬²¢ÏÔÊ¾ÊµÊ±½ø¶ÈÌõ¡£
-       - ĞŞÕıÁËÎÄ¼ş¼ĞÏÂÔØÊ±¿ÉÄÜ²úÉúµÄÖØ¸´Ä¿Â¼ÎÊÌâ¡£
-    2. ¿Í»§¶ËËÑË÷ÓëÑéÖ¤: ËÑË÷²¢ÕÒ³ö°æ±¾×îºÏÊÊµÄ League of Legends ¿Í»§¶Ë¡£
-    3. ¿Í»§¶ËÎÄ¼şÕûÀí: ¼ì²éÄ¿±êÄ¿Â¼£¬±ÜÃâÖØ¸´²Ù×÷£¬È»ºó¸ù¾İÅäÖÃÖ´ĞĞ "Move" »ò "Copy"¡£
-    4. ´´½¨×ÀÃæ¿ì½İ·½Ê½: ÎªÕûÀíºÃµÄ¿Í»§¶ËÔÚ×ÀÃæ´´½¨¿ì½İ·½Ê½¡£
-    5. ÇåÀíºÍ¸üĞÂÅäÖÃÎÄ¼ş: É¾³ı machine.cfg ²¢¶¯Ì¬ĞŞ¸Ä»ò´´½¨ product_settings.yaml¡£
-    6. [ĞÂÔö] ´ò¿ªÍøÒ³: ËùÓĞ²Ù×÷Íê³Éºó£¬ÔÚÄ¬ÈÏä¯ÀÀÆ÷ÖĞ´ò¿ªÖ¸¶¨ÍøÒ³¡£
-    7. ½áÊø²¢µÈ´ıÓÃ»§È·ÈÏ¡£
+    æ­¤è„šæœ¬æŒ‰é¡ºåºæ‰§è¡Œä»¥ä¸‹æ“ä½œï¼š
+    1. [å¯é€‰] WebDAV ä¸‹è½½:
+       - ç»Ÿä¸€ä¸€æ¬¡æ€§è¾“å…¥å‡­æ®ã€‚
+       - ä¸‹è½½æŒ‡å®šçš„æ–‡ä»¶å¤¹å’Œå•ä¸ªæ–‡ä»¶åˆ°æ¡Œé¢ï¼Œå¹¶æ˜¾ç¤ºå®æ—¶è¿›åº¦æ¡ã€‚
+       - ä¿®æ­£äº†æ–‡ä»¶å¤¹ä¸‹è½½æ—¶å¯èƒ½äº§ç”Ÿçš„é‡å¤ç›®å½•é—®é¢˜ã€‚
+    2. å®¢æˆ·ç«¯æœç´¢ä¸éªŒè¯: æœç´¢å¹¶æ‰¾å‡ºç‰ˆæœ¬æœ€åˆé€‚çš„ League of Legends å®¢æˆ·ç«¯ã€‚
+    3. å®¢æˆ·ç«¯æ–‡ä»¶æ•´ç†: æ£€æŸ¥ç›®æ ‡ç›®å½•ï¼Œé¿å…é‡å¤æ“ä½œï¼Œç„¶åæ ¹æ®é…ç½®æ‰§è¡Œ "Move" æˆ– "Copy"ã€‚
+    4. åˆ›å»ºæ¡Œé¢å¿«æ·æ–¹å¼: ä¸ºæ•´ç†å¥½çš„å®¢æˆ·ç«¯åœ¨æ¡Œé¢åˆ›å»ºå¿«æ·æ–¹å¼ã€‚
+    5. æ¸…ç†å’Œæ›´æ–°é…ç½®æ–‡ä»¶: åˆ é™¤ machine.cfg å¹¶åŠ¨æ€ä¿®æ”¹æˆ–åˆ›å»º product_settings.yamlã€‚
+    6. [æ–°å¢] æ‰“å¼€ç½‘é¡µ: æ‰€æœ‰æ“ä½œå®Œæˆåï¼Œåœ¨é»˜è®¤æµè§ˆå™¨ä¸­æ‰“å¼€æŒ‡å®šç½‘é¡µã€‚
+    7. ç»“æŸå¹¶ç­‰å¾…ç”¨æˆ·ç¡®è®¤ã€‚
 
 .NOTES
-    ×÷Õß: AI ÖúÊÖ
-    ÈÕÆÚ: 2023-10-27
-    °æ±¾: 3.8 (ĞÂÔö£º½Å±¾Ö´ĞĞÍê±Ïºó×Ô¶¯´ò¿ªÖ¸¶¨ÍøÒ³)
+    ä½œè€…: AI åŠ©æ‰‹
+    æ—¥æœŸ: 2023-10-27
+    ç‰ˆæœ¬: 3.8 (æ–°å¢ï¼šè„šæœ¬æ‰§è¡Œå®Œæ¯•åè‡ªåŠ¨æ‰“å¼€æŒ‡å®šç½‘é¡µ)
 
 .EXAMPLE
     .\ManageRiotClient.ps1
 #>
 
-# --- ÅäÖÃ ---
-# --- 1. WebDAV ÏÂÔØÅäÖÃ ---
-$enableWebDAVDownload = $true      # ÉèÖÃÎª $true ÆôÓÃ WebDAV ÎÄ¼ş¼ĞÏÂÔØ
-$webdavUrl = "http://www1.movemama.cn/±ã½İ/"
+# --- é…ç½® ---
+# --- 1. WebDAV ä¸‹è½½é…ç½® ---
+$enableWebDAVDownload = $true      # è®¾ç½®ä¸º $true å¯ç”¨ WebDAV æ–‡ä»¶å¤¹ä¸‹è½½
+$webdavUrl = "http://www1.movemama.cn/ä¾¿æ·/"
 
-$enableWebDAVFileDownload = $true # ÉèÖÃÎª $true ÆôÓÃ WebDAV µ¥ÎÄ¼şÏÂÔØ
+$enableWebDAVFileDownload = $true # è®¾ç½®ä¸º $true å¯ç”¨ WebDAV å•æ–‡ä»¶ä¸‹è½½
 $webdavFileUrl = "http://www1.movemama.cn/1.rar"
 
-# --- 2. Riot ¿Í»§¶ËÎÄ¼ş²Ù×÷ÅäÖÃ ---
-$fileOperationMode = "Move" # ¿ÉÑ¡²Ù×÷: "Move" (ÒÆ¶¯) »ò "Copy" (¸´ÖÆ)¡£Ä¬ÈÏÎª "Move"¡£
-$searchDepth = 8 # ËÑË÷µÄ×î´óÉî¶È
+# --- 2. Riot å®¢æˆ·ç«¯æ–‡ä»¶æ“ä½œé…ç½® ---
+$fileOperationMode = "Move" # å¯é€‰æ“ä½œ: "Move" (ç§»åŠ¨) æˆ– "Copy" (å¤åˆ¶)ã€‚é»˜è®¤ä¸º "Move"ã€‚
+$searchDepth = 8 # æœç´¢çš„æœ€å¤§æ·±åº¦
 
-# --- 3. ÎÄ¼şÃûÅäÖÃ (Ò»°ãÎŞĞèĞŞ¸Ä) ---
+# --- 3. æ–‡ä»¶åé…ç½® (ä¸€èˆ¬æ— éœ€ä¿®æ”¹) ---
 $riotClientExe = "RiotClientServices.exe"
 $leagueClientExe = "LeagueClient.exe"
 $ddragonApiUrl = "https://ddragon.leagueoflegends.com/api/versions.json"
 
-# --- ÓÃÓÚ´æ´¢½á¹ûµÄ±äÁ¿ ---
+# --- ç”¨äºå­˜å‚¨ç»“æœçš„å˜é‡ ---
 $riotClientFullPath = ""
 $leagueClientFoundList = @()
 $latestApiVersion = ""
 $closestLeagueClient = $null
 $isLeagueClientVersionValid = $false
 
-# --- ¶¨ÒåÒªËÑË÷µÄÇı¶¯Æ÷ ---
+# --- å®šä¹‰è¦æœç´¢çš„é©±åŠ¨å™¨ ---
 $searchDrives = Get-PSDrive -PSProvider FileSystem | Where-Object {$_.Root -like "*:\" -and $_.Provider.Name -eq "FileSystem" -and $_.Free -gt 0} | Select-Object -ExpandProperty Root
 
-# --- °æ±¾ºÅ´¦ÀíºÍ±È½Ïº¯Êı ---
+# --- ç‰ˆæœ¬å·å¤„ç†å’Œæ¯”è¾ƒå‡½æ•° ---
 function Get-VersionParts {
     param(
         [Parameter(Mandatory=$true)]
@@ -95,17 +95,17 @@ function Is-VersionCompatible {
     return $false
 }
 
-# --- Ö÷Á÷³Ì ---
+# --- ä¸»æµç¨‹ ---
 
-# --- 1 & 2. WebDAV Í³Ò»²Ù×÷ ---
+# --- 1 & 2. WebDAV ç»Ÿä¸€æ“ä½œ ---
 if ($enableWebDAVDownload -or $enableWebDAVFileDownload) {
-    Write-Host "--- ¿ªÊ¼Ö´ĞĞ WebDAV ÏÂÔØÈÎÎñ ---" -ForegroundColor Yellow
-    $credential = Get-Credential -UserName "" -Message "ÇëÊäÈëÓÃÓÚËùÓĞ WebDAV ²Ù×÷µÄÆ¾¾İ"
+    Write-Host "--- å¼€å§‹æ‰§è¡Œ WebDAV ä¸‹è½½ä»»åŠ¡ ---" -ForegroundColor Yellow
+    $credential = Get-Credential -UserName "" -Message "è¯·è¾“å…¥ç”¨äºæ‰€æœ‰ WebDAV æ“ä½œçš„å‡­æ®"
 
     if ($credential) {
-        # --- ÎÄ¼ş¼ĞÏÂÔØ ---
+        # --- æ–‡ä»¶å¤¹ä¸‹è½½ ---
         if ($enableWebDAVDownload) {
-            Write-Host "ÕıÔÚ×¼±¸ÏÂÔØÎÄ¼ş¼Ğ..."
+            Write-Host "æ­£åœ¨å‡†å¤‡ä¸‹è½½æ–‡ä»¶å¤¹..."
             $desktopPath = [System.Environment]::GetFolderPath('Desktop')
             $uri = [System.Uri]$webdavUrl
             $folderName = ($uri.Segments[-1]).TrimEnd('/')
@@ -117,9 +117,9 @@ if ($enableWebDAVDownload -or $enableWebDAVFileDownload) {
             $driveName = "WebDAVShare"
             try {
                 if (-not (Test-Path $localDownloadPath)) { New-Item -Path $localDownloadPath -ItemType Directory | Out-Null }
-                Write-Host "ÕıÔÚÁ¬½Óµ½ WebDAV ·şÎñÆ÷..."
+                Write-Host "æ­£åœ¨è¿æ¥åˆ° WebDAV æœåŠ¡å™¨..."
                 New-PSDrive -Name $driveName -PSProvider FileSystem -Root $uncPath -Credential $credential -ErrorAction Stop | Out-Null
-                Write-Host "Á¬½Ó³É¹¦£¬ÕıÔÚ×¼±¸ÏÂÔØÎÄ¼şµ½ '$localDownloadPath'..."
+                Write-Host "è¿æ¥æˆåŠŸï¼Œæ­£åœ¨å‡†å¤‡ä¸‹è½½æ–‡ä»¶åˆ° '$localDownloadPath'..."
                 
                 $sourceItems = Get-ChildItem -Path "$($driveName):\" -Recurse
                 $totalCount = $sourceItems.Count
@@ -128,23 +128,23 @@ if ($enableWebDAVDownload -or $enableWebDAVFileDownload) {
                     Copy-Item -Path "$($driveName):\*" -Destination $localDownloadPath -Recurse -Force -PassThru | ForEach-Object {
                         $copiedCount++
                         $percent = ($copiedCount / $totalCount) * 100
-                        Write-Progress -Activity "´Ó WebDAV ÏÂÔØÎÄ¼ş¼Ğ" -Status "ÕıÔÚ¸´ÖÆ: $($_.Name)" -PercentComplete $percent -CurrentOperation "$copiedCount / $totalCount"
+                        Write-Progress -Activity "ä» WebDAV ä¸‹è½½æ–‡ä»¶å¤¹" -Status "æ­£åœ¨å¤åˆ¶: $($_.Name)" -PercentComplete $percent -CurrentOperation "$copiedCount / $totalCount"
                     }
-                    Write-Progress -Activity "´Ó WebDAV ÏÂÔØÎÄ¼ş¼Ğ" -Completed
+                    Write-Progress -Activity "ä» WebDAV ä¸‹è½½æ–‡ä»¶å¤¹" -Completed
                 } else {
-                    Write-Host "WebDAV ÎÄ¼ş¼ĞÎª¿Õ£¬ÎŞĞèÏÂÔØ¡£"
+                    Write-Host "WebDAV æ–‡ä»¶å¤¹ä¸ºç©ºï¼Œæ— éœ€ä¸‹è½½ã€‚"
                 }
-                Write-Host "WebDAV ÎÄ¼ş¼ĞÏÂÔØÍê³É£¡" -ForegroundColor Green
+                Write-Host "WebDAV æ–‡ä»¶å¤¹ä¸‹è½½å®Œæˆï¼" -ForegroundColor Green
             } catch {
-                Write-Error "WebDAV ÎÄ¼ş¼ĞÏÂÔØÊ§°Ü: $($_.Exception.Message)"
+                Write-Error "WebDAV æ–‡ä»¶å¤¹ä¸‹è½½å¤±è´¥: $($_.Exception.Message)"
             } finally {
-                if (Get-PSDrive $driveName -ErrorAction SilentlyContinue) { Remove-PSDrive -Name $driveName; Write-Host "ÒÑ¶Ï¿ª WebDAV Á¬½Ó¡£" }
+                if (Get-PSDrive $driveName -ErrorAction SilentlyContinue) { Remove-PSDrive -Name $driveName; Write-Host "å·²æ–­å¼€ WebDAV è¿æ¥ã€‚" }
             }
         }
 
-        # --- µ¥ÎÄ¼şÏÂÔØ ---
+        # --- å•æ–‡ä»¶ä¸‹è½½ ---
         if ($enableWebDAVFileDownload) {
-            Write-Host "ÕıÔÚ×¼±¸ÏÂÔØµ¥¸öÎÄ¼ş..."
+            Write-Host "æ­£åœ¨å‡†å¤‡ä¸‹è½½å•ä¸ªæ–‡ä»¶..."
             $job = $null
             try {
                 $desktopPath = [System.Environment]::GetFolderPath('Desktop')
@@ -154,75 +154,75 @@ if ($enableWebDAVDownload -or $enableWebDAVFileDownload) {
                 $job = Start-BitsTransfer -Source $webdavFileUrl -Destination $outputFilePath -Credential $credential -Asynchronous
                 while ($job.JobState -in 'Connecting', 'Transferring') {
                     $percent = ($job.BytesTransferred / $job.BytesTotal) * 100
-                    Write-Progress -Activity "´Ó WebDAV ÏÂÔØÎÄ¼ş" -Status "ÏÂÔØÖĞ: $fileName" -PercentComplete $percent -CurrentOperation ("{0:N2} MB / {1:N2} MB" -f ($job.BytesTransferred/1MB), ($job.BytesTotal/1MB))
+                    Write-Progress -Activity "ä» WebDAV ä¸‹è½½æ–‡ä»¶" -Status "ä¸‹è½½ä¸­: $fileName" -PercentComplete $percent -CurrentOperation ("{0:N2} MB / {1:N2} MB" -f ($job.BytesTransferred/1MB), ($job.BytesTotal/1MB))
                     Start-Sleep -Milliseconds 500
                 }
-                Write-Progress -Activity "´Ó WebDAV ÏÂÔØÎÄ¼ş" -Completed
+                Write-Progress -Activity "ä» WebDAV ä¸‹è½½æ–‡ä»¶" -Completed
                 Complete-BitsTransfer -BitsJob $job
-                Write-Host "ÎÄ¼ş '$fileName' ÏÂÔØ³É¹¦£¡" -ForegroundColor Green
+                Write-Host "æ–‡ä»¶ '$fileName' ä¸‹è½½æˆåŠŸï¼" -ForegroundColor Green
             } catch {
-                Write-Error "WebDAV µ¥ÎÄ¼şÏÂÔØÊ§°Ü: $($_.Exception.Message)"
+                Write-Error "WebDAV å•æ–‡ä»¶ä¸‹è½½å¤±è´¥: $($_.Exception.Message)"
             } finally {
                 if ($job) { Remove-BitsTransfer -BitsJob $job -Confirm:$false -ErrorAction SilentlyContinue }
             }
         }
     } else {
-        Write-Warning "ÓÃ»§È¡ÏûÁËÆ¾¾İÊäÈë£¬ÒÑÌø¹ıËùÓĞ WebDAV ÏÂÔØÈÎÎñ¡£"
+        Write-Warning "ç”¨æˆ·å–æ¶ˆäº†å‡­æ®è¾“å…¥ï¼Œå·²è·³è¿‡æ‰€æœ‰ WebDAV ä¸‹è½½ä»»åŠ¡ã€‚"
     }
-    Write-Host "--- WebDAV ÏÂÔØÈÎÎñ½áÊø ---" -ForegroundColor Yellow
+    Write-Host "--- WebDAV ä¸‹è½½ä»»åŠ¡ç»“æŸ ---" -ForegroundColor Yellow
     Write-Host ""
 }
 
-# --- 3. »ñÈ¡ API °æ±¾ ---
-Write-Host "ÕıÔÚ»ñÈ¡×îĞÂµÄ League of Legends API °æ±¾..."
+# --- 3. è·å– API ç‰ˆæœ¬ ---
+Write-Host "æ­£åœ¨è·å–æœ€æ–°çš„ League of Legends API ç‰ˆæœ¬..."
 try {
     $latestApiVersion = (Invoke-RestMethod -Uri $ddragonApiUrl)[0]
-    Write-Host "³É¹¦»ñÈ¡µ½ API °æ±¾ºÅ: $latestApiVersion"
+    Write-Host "æˆåŠŸè·å–åˆ° API ç‰ˆæœ¬å·: $latestApiVersion"
 } catch {
-    Write-Error "»ñÈ¡ API °æ±¾ºÅÊ±³ö´í: $($_.Exception.Message)"
+    Write-Error "è·å– API ç‰ˆæœ¬å·æ—¶å‡ºé”™: $($_.Exception.Message)"
 }
 Write-Host ""
 
-# --- 4. ËÑË÷ RiotClientServices.exe ---
-Write-Host "ÕıÔÚËÑË÷ '$riotClientExe'..."
+# --- 4. æœç´¢ RiotClientServices.exe ---
+Write-Host "æ­£åœ¨æœç´¢ '$riotClientExe'..."
 foreach ($drive in $searchDrives) {
     $riotClientPaths = Get-ChildItem -Path $drive -Filter $riotClientExe -Depth $searchDepth -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($riotClientPaths) {
         $riotClientFullPath = $riotClientPaths.DirectoryName
-        Write-Host "ÕÒµ½ '$riotClientExe' Ä¿Â¼: $riotClientFullPath"
+        Write-Host "æ‰¾åˆ° '$riotClientExe' ç›®å½•: $riotClientFullPath"
         break
     }
 }
-if (-not $riotClientFullPath) { Write-Host "'$riotClientExe' Î´ÕÒµ½¡£" }
+if (-not $riotClientFullPath) { Write-Host "'$riotClientExe' æœªæ‰¾åˆ°ã€‚" }
 Write-Host ""
 
-# --- 5. ËÑË÷ËùÓĞ LeagueClient.exe ÊµÀı ---
-Write-Host "ÕıÔÚËÑË÷ËùÓĞ '$leagueClientExe' ÊµÀı..."
+# --- 5. æœç´¢æ‰€æœ‰ LeagueClient.exe å®ä¾‹ ---
+Write-Host "æ­£åœ¨æœç´¢æ‰€æœ‰ '$leagueClientExe' å®ä¾‹..."
 foreach ($drive in $searchDrives) {
-    Write-Host "ÕıÔÚ '$drive' ÖĞËÑË÷..."
+    Write-Host "æ­£åœ¨ '$drive' ä¸­æœç´¢..."
     $foundPaths = Get-ChildItem -Path $drive -Filter $leagueClientExe -Depth $searchDepth -Recurse -ErrorAction SilentlyContinue
     foreach ($clientPath in $foundPaths) {
         if ($clientPath.DirectoryName -like "*PBE*") {
-            Write-Host "  - ÕÒµ½ÊµÀıÓÚ: $($clientPath.DirectoryName) -> ÒÑÌø¹ı (PBE ¿Í»§¶Ë)"
+            Write-Host "  - æ‰¾åˆ°å®ä¾‹äº: $($clientPath.DirectoryName) -> å·²è·³è¿‡ (PBE å®¢æˆ·ç«¯)"
             continue
         }
-        Write-Host "  - ÕÒµ½ÊµÀıÓÚ: $($clientPath.DirectoryName)"
+        Write-Host "  - æ‰¾åˆ°å®ä¾‹äº: $($clientPath.DirectoryName)"
         try {
             $versionFull = (Get-Item $clientPath.FullName).VersionInfo.FileVersion
             if ($versionFull) {
                 $versionDisplay = ($versionFull.Split('.') | Select-Object -First 3) -join '.'
                 $leagueClientFoundList += @{ Path = $clientPath.DirectoryName; VersionFull = $versionFull; VersionDisplay = $versionDisplay }
-                Write-Host "    °æ±¾: $versionDisplay"
+                Write-Host "    ç‰ˆæœ¬: $versionDisplay"
             }
-        } catch { Write-Warning "    ÎŞ·¨»ñÈ¡°æ±¾ĞÅÏ¢¡£" }
+        } catch { Write-Warning "    æ— æ³•è·å–ç‰ˆæœ¬ä¿¡æ¯ã€‚" }
     }
 }
-Write-Host "ËÑË÷Íê³É£¬¹²ÕÒµ½ $($leagueClientFoundList.Count) ¸öÓĞĞ§ÊµÀı¡£"
+Write-Host "æœç´¢å®Œæˆï¼Œå…±æ‰¾åˆ° $($leagueClientFoundList.Count) ä¸ªæœ‰æ•ˆå®ä¾‹ã€‚"
 Write-Host ""
 
-# --- 6. É¸Ñ¡×î½Ó½üµÄ°æ±¾ ---
+# --- 6. ç­›é€‰æœ€æ¥è¿‘çš„ç‰ˆæœ¬ ---
 if ($leagueClientFoundList.Count -gt 0 -and $latestApiVersion) {
-    Write-Host "ÕıÔÚÉ¸Ñ¡×î½Ó½ü API °æ±¾ '$latestApiVersion' µÄ¿Í»§¶Ë..."
+    Write-Host "æ­£åœ¨ç­›é€‰æœ€æ¥è¿‘ API ç‰ˆæœ¬ '$latestApiVersion' çš„å®¢æˆ·ç«¯..."
     $minDistance = [int]::MaxValue
     foreach ($client in $leagueClientFoundList) {
         $distance = Get-VersionDistance -LocalVersionDisplay $client.VersionDisplay -ApiVersion $latestApiVersion
@@ -232,18 +232,18 @@ if ($leagueClientFoundList.Count -gt 0 -and $latestApiVersion) {
         }
     }
     if ($closestLeagueClient) {
-        Write-Host "ÕÒµ½×î½Ó½üµÄ°æ±¾: $($closestLeagueClient.VersionDisplay) (Â·¾¶: $($closestLeagueClient.Path))"
+        Write-Host "æ‰¾åˆ°æœ€æ¥è¿‘çš„ç‰ˆæœ¬: $($closestLeagueClient.VersionDisplay) (è·¯å¾„: $($closestLeagueClient.Path))"
         $isLeagueClientVersionValid = Is-VersionCompatible -LocalVersionDisplay $closestLeagueClient.VersionDisplay -ApiVersion $latestApiVersion
     }
 }
 Write-Host ""
 
-# --- 7. ¸´ÖÆ»òÒÆ¶¯ÎÄ¼ş ---
+# --- 7. å¤åˆ¶æˆ–ç§»åŠ¨æ–‡ä»¶ ---
 $wasFileOperationSkipped = $false
 $targetRiotClientPath = ""
 $targetLeagueClientPath = ""
 if ($closestLeagueClient -and $riotClientFullPath) {
-    Write-Host "--- ¿ªÊ¼Ö´ĞĞÎÄ¼şÕûÀí²Ù×÷ ---"
+    Write-Host "--- å¼€å§‹æ‰§è¡Œæ–‡ä»¶æ•´ç†æ“ä½œ ---"
     $targetDrive = Split-Path -Path $closestLeagueClient.Path -Qualifier
     $newRiotGamesPath = Join-Path -Path $targetDrive -ChildPath "Riot Games"
     $riotClientDirName = Split-Path -Path $riotClientFullPath -Leaf
@@ -252,40 +252,40 @@ if ($closestLeagueClient -and $riotClientFullPath) {
     $targetLeagueClientPath = Join-Path -Path $newRiotGamesPath -ChildPath $leagueClientDirName
 
     if ((Test-Path $targetRiotClientPath) -and (Test-Path $targetLeagueClientPath)) {
-        Write-Host "Ä¿±êÄ¿Â¼ '$newRiotGamesPath' ÖĞÒÑ´æÔÚËùĞèÎÄ¼ş¼Ğ£¬½«Ìø¹ıÎÄ¼şÕûÀí¡£" -ForegroundColor Yellow
+        Write-Host "ç›®æ ‡ç›®å½• '$newRiotGamesPath' ä¸­å·²å­˜åœ¨æ‰€éœ€æ–‡ä»¶å¤¹ï¼Œå°†è·³è¿‡æ–‡ä»¶æ•´ç†ã€‚" -ForegroundColor Yellow
         $wasFileOperationSkipped = $true
     } else {
         try {
-            Write-Host "ÕıÔÚ×¼±¸Ä¿±êÄ¿Â¼: $newRiotGamesPath"
+            Write-Host "æ­£åœ¨å‡†å¤‡ç›®æ ‡ç›®å½•: $newRiotGamesPath"
             New-Item -Path $newRiotGamesPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
             switch ($fileOperationMode.ToLower()) {
                 'copy' {
-                    Write-Host "ÕıÔÚ¸´ÖÆ Riot Client..."
+                    Write-Host "æ­£åœ¨å¤åˆ¶ Riot Client..."
                     Copy-Item -Path $riotClientFullPath -Destination $newRiotGamesPath -Recurse -Force
-                    Write-Host "ÕıÔÚ¸´ÖÆ League of Legends..."
+                    Write-Host "æ­£åœ¨å¤åˆ¶ League of Legends..."
                     Copy-Item -Path $closestLeagueClient.Path -Destination $newRiotGamesPath -Recurse -Force
                 }
                 default {
-                    if ($fileOperationMode.ToLower() -ne 'move') { Write-Warning "ÎŞĞ§Ä£Ê½, ½«Ö´ĞĞÄ¬ÈÏµÄ 'Move' ²Ù×÷¡£" }
-                    Write-Host "ÕıÔÚÒÆ¶¯ Riot Client..."
+                    if ($fileOperationMode.ToLower() -ne 'move') { Write-Warning "æ— æ•ˆæ¨¡å¼, å°†æ‰§è¡Œé»˜è®¤çš„ 'Move' æ“ä½œã€‚" }
+                    Write-Host "æ­£åœ¨ç§»åŠ¨ Riot Client..."
                     Move-Item -Path $riotClientFullPath -Destination $newRiotGamesPath -Force
-                    Write-Host "ÕıÔÚÒÆ¶¯ League of Legends..."
+                    Write-Host "æ­£åœ¨ç§»åŠ¨ League of Legends..."
                     Move-Item -Path $closestLeagueClient.Path -Destination $newRiotGamesPath -Force
                 }
             }
-            Write-Host "ÎÄ¼şÕûÀí²Ù×÷³É¹¦¡£" -ForegroundColor Green
+            Write-Host "æ–‡ä»¶æ•´ç†æ“ä½œæˆåŠŸã€‚" -ForegroundColor Green
         } catch {
-            Write-Error "ÎÄ¼şÕûÀí²Ù×÷Ê§°Ü: $($_.Exception.Message)"
+            Write-Error "æ–‡ä»¶æ•´ç†æ“ä½œå¤±è´¥: $($_.Exception.Message)"
         }
     }
 } else {
-    Write-Host "--- Î´Âú×ãÎÄ¼şÕûÀíÌõ¼ş (Î´Í¬Ê±ÕÒµ½Á½¸ö¿Í»§¶ËÄ¿Â¼) ---"
+    Write-Host "--- æœªæ»¡è¶³æ–‡ä»¶æ•´ç†æ¡ä»¶ (æœªåŒæ—¶æ‰¾åˆ°ä¸¤ä¸ªå®¢æˆ·ç«¯ç›®å½•) ---"
 }
 Write-Host ""
 
-# --- 8. ´´½¨×ÀÃæ¿ì½İ·½Ê½ ---
+# --- 8. åˆ›å»ºæ¡Œé¢å¿«æ·æ–¹å¼ ---
 if ($closestLeagueClient -and $riotClientFullPath) {
-    Write-Host "--- ¿ªÊ¼´´½¨×ÀÃæ¿ì½İ·½Ê½ ---"
+    Write-Host "--- å¼€å§‹åˆ›å»ºæ¡Œé¢å¿«æ·æ–¹å¼ ---"
     try {
         $finalRiotClientPath = if ($wasFileOperationSkipped) { $riotClientFullPath } else { $targetRiotClientPath }
         $finalLeagueClientPath = if ($wasFileOperationSkipped) { $closestLeagueClient.Path } else { $targetLeagueClientPath }
@@ -298,23 +298,23 @@ if ($closestLeagueClient -and $riotClientFullPath) {
             $shortcutRiot = $wshell.CreateShortcut((Join-Path $desktopPath "Riot Client.lnk"))
             $shortcutRiot.TargetPath = $finalRiotClientExe
             $shortcutRiot.Save()
-            Write-Host "ÒÑ´´½¨ Riot Client ¿ì½İ·½Ê½¡£"
+            Write-Host "å·²åˆ›å»º Riot Client å¿«æ·æ–¹å¼ã€‚"
             $shortcutLeague = $wshell.CreateShortcut((Join-Path $desktopPath "League of Legends.lnk"))
             $shortcutLeague.TargetPath = $finalLeagueClientExe
             $shortcutLeague.Save()
-            Write-Host "ÒÑ´´½¨ League of Legends ¿ì½İ·½Ê½¡£"
+            Write-Host "å·²åˆ›å»º League of Legends å¿«æ·æ–¹å¼ã€‚"
         } else {
-            Write-Warning "ÎŞ·¨¶¨Î»×îÖÕµÄ .exe ÎÄ¼ş£¬ÒÑÌø¹ı´´½¨¿ì½İ·½Ê½¡£"
+            Write-Warning "æ— æ³•å®šä½æœ€ç»ˆçš„ .exe æ–‡ä»¶ï¼Œå·²è·³è¿‡åˆ›å»ºå¿«æ·æ–¹å¼ã€‚"
         }
     } catch {
-        Write-Error "´´½¨¿ì½İ·½Ê½Ê±³ö´í: $($_.Exception.Message)"
+        Write-Error "åˆ›å»ºå¿«æ·æ–¹å¼æ—¶å‡ºé”™: $($_.Exception.Message)"
     }
 }
 Write-Host ""
 
-# --- 9. ÇåÀíºÍ¸üĞÂÅäÖÃÎÄ¼ş ---
+# --- 9. æ¸…ç†å’Œæ›´æ–°é…ç½®æ–‡ä»¶ ---
 if ($closestLeagueClient -and $riotClientFullPath) {
-    Write-Host "--- ¿ªÊ¼ÇåÀíºÍ¸üĞÂÅäÖÃÎÄ¼ş ---"
+    Write-Host "--- å¼€å§‹æ¸…ç†å’Œæ›´æ–°é…ç½®æ–‡ä»¶ ---"
     try {
         $finalRiotClientPath = if ($wasFileOperationSkipped) { $riotClientFullPath } else { $targetRiotClientPath }
         $finalLeagueClientPath = if ($wasFileOperationSkipped) { $closestLeagueClient.Path } else { $targetLeagueClientPath }
@@ -322,12 +322,12 @@ if ($closestLeagueClient -and $riotClientFullPath) {
 
         $programDataPath = $env:ProgramData
         $machineCfgPath = Join-Path $programDataPath "Riot Games\machine.cfg"
-        Write-Host "ÕıÔÚ¼ì²é '$machineCfgPath'..."
+        Write-Host "æ­£åœ¨æ£€æŸ¥ '$machineCfgPath'..."
         if (Test-Path $machineCfgPath) {
             Remove-Item -Path $machineCfgPath -Force -ErrorAction SilentlyContinue
-            Write-Host "ÎÄ¼şÒÑÉ¾³ı¡£"
+            Write-Host "æ–‡ä»¶å·²åˆ é™¤ã€‚"
         } else {
-            Write-Host "ÎÄ¼ş²»´æÔÚ£¬ÎŞĞèÉ¾³ı¡£"
+            Write-Host "æ–‡ä»¶ä¸å­˜åœ¨ï¼Œæ— éœ€åˆ é™¤ã€‚"
         }
 
         $yamlFilePath = Join-Path $programDataPath "Riot Games\Metadata\league_of_legends.live\league_of_legends.live.product_settings.yaml"
@@ -335,13 +335,13 @@ if ($closestLeagueClient -and $riotClientFullPath) {
         $yamlFullPath = $finalLeagueClientPath.Replace('\', '/')
         $yamlRootPath = $finalInstallRootPath.Replace('\', '/')
 
-        Write-Host "ÕıÔÚ¸üĞÂ '$yamlFilePath'..."
+        Write-Host "æ­£åœ¨æ›´æ–° '$yamlFilePath'..."
         if (Test-Path $yamlFilePath) {
             $content = Get-Content $yamlFilePath -Raw
             $newContent = $content -replace "(?m)^(product_install_full_path:).*", "product_install_full_path: ""$yamlFullPath""" `
                                   -replace "(?m)^(product_install_root:).*", "product_install_root: ""$yamlRootPath"""
             Set-Content -Path $yamlFilePath -Value $newContent -Encoding UTF8
-            Write-Host "YAML ÎÄ¼ş¸üĞÂ³É¹¦¡£"
+            Write-Host "YAML æ–‡ä»¶æ›´æ–°æˆåŠŸã€‚"
         } else {
             if (-not (Test-Path $yamlFileDir)) {
                 New-Item -Path $yamlFileDir -ItemType Directory -Force | Out-Null
@@ -394,33 +394,33 @@ settings:
 should_repair: false
 "@
             Set-Content -Path $yamlFilePath -Value $yamlTemplate -Encoding UTF8
-            Write-Host "ĞÂµÄ YAML ÎÄ¼şÒÑ´´½¨²¢ÅäÖÃÍê³É¡£"
+            Write-Host "æ–°çš„ YAML æ–‡ä»¶å·²åˆ›å»ºå¹¶é…ç½®å®Œæˆã€‚"
         }
     } catch {
-        Write-Error "ÇåÀí»ò¸üĞÂÅäÖÃÎÄ¼şÊ±³ö´í: $($_.Exception.Message)"
+        Write-Error "æ¸…ç†æˆ–æ›´æ–°é…ç½®æ–‡ä»¶æ—¶å‡ºé”™: $($_.Exception.Message)"
     }
 }
 Write-Host ""
 
-# --- 10. ×îÖÕ½á¹û±¨¸æ ---
-Write-Host "--- ×îÖÕ½á¹û±¨¸æ ---"
-Write-Host "ÕÒµ½µÄ RiotClientServices.exe Ä¿Â¼: $riotClientFullPath"
+# --- 10. æœ€ç»ˆç»“æœæŠ¥å‘Š ---
+Write-Host "--- æœ€ç»ˆç»“æœæŠ¥å‘Š ---"
+Write-Host "æ‰¾åˆ°çš„ RiotClientServices.exe ç›®å½•: $riotClientFullPath"
 if ($closestLeagueClient) {
-    Write-Host "ÕÒµ½µÄ×îÓÅ LeagueClient.exe Ä¿Â¼: $($closestLeagueClient.Path)"
-    Write-Host "  - °æ±¾: $($closestLeagueClient.VersionDisplay) (ÍêÕû: $($closestLeagueClient.VersionFull))"
+    Write-Host "æ‰¾åˆ°çš„æœ€ä¼˜ LeagueClient.exe ç›®å½•: $($closestLeagueClient.Path)"
+    Write-Host "  - ç‰ˆæœ¬: $($closestLeagueClient.VersionDisplay) (å®Œæ•´: $($closestLeagueClient.VersionFull))"
 } else {
-    Write-Host "Î´ÕÒµ½ÓĞĞ§µÄ LeagueClient.exe¡£"
+    Write-Host "æœªæ‰¾åˆ°æœ‰æ•ˆçš„ LeagueClient.exeã€‚"
 }
-Write-Host "°æ±¾¼æÈİĞÔ¼ì²é½á¹û: $isLeagueClientVersionValid"
+Write-Host "ç‰ˆæœ¬å…¼å®¹æ€§æ£€æŸ¥ç»“æœ: $isLeagueClientVersionValid"
 Write-Host ""
 
-# --- 11. (ĞÂÔö) ´ò¿ªÍøÒ³ ---
-Write-Host "ËùÓĞ²Ù×÷ÒÑÍê³É£¬ÕıÔÚ´ò¿ªÖ¸¶¨ÍøÒ³..."
+# --- 11. (æ–°å¢) æ‰“å¼€ç½‘é¡µ ---
+Write-Host "æ‰€æœ‰æ“ä½œå·²å®Œæˆï¼Œæ­£åœ¨æ‰“å¼€æŒ‡å®šç½‘é¡µ..."
 try {
     Start-Process "https://uuyc.163.com"
 } catch {
-    Write-Warning "ÎŞ·¨×Ô¶¯´ò¿ªÍøÒ³: $($_.Exception.Message)"
+    Write-Warning "æ— æ³•è‡ªåŠ¨æ‰“å¼€ç½‘é¡µ: $($_.Exception.Message)"
 }
 
-# --- 12. µÈ´ıÓÃ»§ÊäÈëºó¹Ø±Õ ---
-Read-Host -Prompt "°´ Enter ¼ü¹Ø±Õ´Ë´°¿Ú..."
+# --- 12. ç­‰å¾…ç”¨æˆ·è¾“å…¥åå…³é—­ ---
+Read-Host -Prompt "æŒ‰ Enter é”®å…³é—­æ­¤çª—å£..."
