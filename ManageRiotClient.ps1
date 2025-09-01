@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     一个全能的游戏客户端管理脚本。它能从 WebDAV 下载资源（带进度条），自动搜索、验证、整理
     Riot Games 客户端，创建桌面快捷方式，重置配置文件，并在最后打开指定网页。
@@ -19,7 +19,7 @@
 .NOTES
     作者: AI 助手
     日期: 2023-10-27
-    版本: 3.8 (新增：脚本执行完毕后自动打开指定网页)
+    版本: 4.0 (修正：BITS 任务的错误属性获取方式)
 
 .EXAMPLE
     .\ManageRiotClient.ps1
@@ -151,18 +151,38 @@ if ($enableWebDAVDownload -or $enableWebDAVFileDownload) {
                 $fileName = Split-Path -Path $webdavFileUrl -Leaf
                 $outputFilePath = Join-Path -Path $desktopPath -ChildPath $fileName
                 
+                # 开始 BITS 传输任务
                 $job = Start-BitsTransfer -Source $webdavFileUrl -Destination $outputFilePath -Credential $credential -Asynchronous
-                while ($job.JobState -in 'Connecting', 'Transferring') {
-                    $percent = ($job.BytesTransferred / $job.BytesTotal) * 100
-                    Write-Progress -Activity "从 WebDAV 下载文件" -Status "下载中: $fileName" -PercentComplete $percent -CurrentOperation ("{0:N2} MB / {1:N2} MB" -f ($job.BytesTransferred/1MB), ($job.BytesTotal/1MB))
+                
+                # 循环显示进度，直到任务结束（无论成功、失败还是暂停）
+                while ($job.JobState -in 'Connecting', 'Transferring', 'Queued') {
+                    if ($job.BytesTotal -gt 0) { # 只有在总大小已知时才计算百分比
+                        $percent = ($job.BytesTransferred / $job.BytesTotal) * 100
+                        Write-Progress -Activity "从 WebDAV 下载文件" -Status "下载中: $fileName" -PercentComplete $percent -CurrentOperation ("{0:N2} MB / {1:N2} MB" -f ($job.BytesTransferred/1MB), ($job.BytesTotal/1MB))
+                    } else {
+                        Write-Progress -Activity "从 WebDAV 下载文件" -Status "正在连接并获取文件大小..."
+                    }
                     Start-Sleep -Milliseconds 500
                 }
                 Write-Progress -Activity "从 WebDAV 下载文件" -Completed
-                Complete-BitsTransfer -BitsJob $job
-                Write-Host "文件 '$fileName' 下载成功！" -ForegroundColor Green
+
+                # 在完成任务前，检查任务的最终状态
+                if ($job.JobState -eq 'Transferred') {
+                    # 只有当状态是“已传输”时，才算真正成功
+                    Complete-BitsTransfer -BitsJob $job
+                    Write-Host "文件 '$fileName' 下载成功！" -ForegroundColor Green
+                } else {
+                    # --- 【最终修正】 ---
+                    # 如果是其他状态（如 Error, TransientError），则获取错误信息并抛出异常
+                    $errorDetails = $job.ErrorDescription
+                    throw "BITS 任务失败。状态: $($job.JobState). 服务器返回错误: $errorDetails"
+                }
+
             } catch {
+                # 现在 catch 块可以捕获到我们手动抛出的详细错误
                 Write-Error "WebDAV 单文件下载失败: $($_.Exception.Message)"
             } finally {
+                # 确保无论如何都清理任务
                 if ($job) { Remove-BitsTransfer -BitsJob $job -Confirm:$false -ErrorAction SilentlyContinue }
             }
         }
@@ -171,9 +191,7 @@ if ($enableWebDAVDownload -or $enableWebDAVFileDownload) {
     }
     Write-Host "--- WebDAV 下载任务结束 ---" -ForegroundColor Yellow
     Write-Host ""
-}
-
-# --- 3. 获取 API 版本 ---
+    # --- 3. 获取 API 版本 ---
 Write-Host "正在获取最新的 League of Legends API 版本..."
 try {
     $latestApiVersion = (Invoke-RestMethod -Uri $ddragonApiUrl)[0]
@@ -424,3 +442,6 @@ try {
 
 # --- 12. 等待用户输入后关闭 ---
 Read-Host -Prompt "按 Enter 键关闭此窗口..."
+
+
+}
