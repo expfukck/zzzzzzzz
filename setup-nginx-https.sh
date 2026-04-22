@@ -1,25 +1,25 @@
 #!/bin/bash
 # Nginx HTTPS 一键安装脚本（Ubuntu 24.04.1 x64）
-# 使用 Let's Encrypt 免费证书，支持自动续期
+# 支持静态网站 / Docker 容器反向代理，Let's Encrypt 免费证书，自动续期
 
-set -e  # 遇到错误立即退出
+set -e
 
-# 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# 检查 root 权限
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}请使用 sudo 或以 root 用户执行此脚本${NC}"
     exit 1
 fi
 
-# 获取用户输入
 echo -e "${YELLOW}========================================${NC}"
 echo -e "${GREEN} Nginx HTTPS 一键部署脚本${NC}"
 echo -e "${YELLOW}========================================${NC}"
+
+# 获取域名和邮箱
 read -p "请输入你的域名（例如 example.com）: " DOMAIN
 read -p "请输入你的邮箱（用于证书到期提醒）: " EMAIL
 
@@ -28,9 +28,36 @@ if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
     exit 1
 fi
 
-# 定义变量
-WEB_ROOT="/var/www/$DOMAIN/html"
-NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
+# 询问是否同时申请 www 子域名
+read -p "是否同时为 www.$DOMAIN 申请证书？(y/n) [默认 n]: " APPLY_WWW
+APPLY_WWW=${APPLY_WWW:-n}
+
+# 选择部署模式
+echo -e "${BLUE}请选择部署模式：${NC}"
+echo "  1) 静态网站（提供本地 HTML 文件）"
+echo "  2) 反向代理（转发到 Docker 容器或本地服务）"
+read -p "请输入数字 [1 或 2]: " MODE
+
+if [ "$MODE" == "1" ]; then
+    DEPLOY_MODE="static"
+    WEB_ROOT="/var/www/$DOMAIN/html"
+    echo -e "${GREEN}已选择：静态网站模式，文件根目录为 $WEB_ROOT${NC}"
+elif [ "$MODE" == "2" ]; then
+    DEPLOY_MODE="proxy"
+    read -p "请输入后端服务地址（默认 http://127.0.0.1:4000）: " BACKEND
+    BACKEND=${BACKEND:-http://127.0.0.1:4000}
+    echo -e "${GREEN}已选择：反向代理模式，转发到 $BACKEND${NC}"
+else
+    echo -e "${RED}无效选择，退出脚本${NC}"
+    exit 1
+fi
+
+# 构建 certbot 域名参数
+CERTBOT_DOMAINS="-d $DOMAIN"
+if [[ "$APPLY_WWW" =~ ^[Yy]$ ]]; then
+    CERTBOT_DOMAINS="$CERTBOT_DOMAINS -d www.$DOMAIN"
+    echo -e "${YELLOW}注意：请确保 www.$DOMAIN 已正确解析到本服务器 IP${NC}"
+fi
 
 # 1. 系统更新与基础依赖
 echo -e "${YELLOW}[1/7] 更新系统包并安装依赖...${NC}"
@@ -38,13 +65,14 @@ apt update
 apt upgrade -y
 apt install -y curl wget nginx certbot python3-certbot-nginx ufw
 
-# 2. 创建网站目录与测试页面
-echo -e "${YELLOW}[2/7] 创建网站目录与测试页面...${NC}"
-mkdir -p "$WEB_ROOT"
-chown -R $SUDO_USER:$SUDO_USER /var/www/$DOMAIN  # 使用执行脚本的用户
-chmod -R 755 /var/www/$DOMAIN
+# 2. 准备网站内容（静态模式需要）
+if [ "$DEPLOY_MODE" == "static" ]; then
+    echo -e "${YELLOW}[2/7] 创建网站目录与测试页面...${NC}"
+    mkdir -p "$WEB_ROOT"
+    chown -R $SUDO_USER:$SUDO_USER /var/www/$DOMAIN
+    chmod -R 755 /var/www/$DOMAIN
 
-cat > "$WEB_ROOT/index.html" <<EOF
+    cat > "$WEB_ROOT/index.html" <<EOF
 <!DOCTYPE html>
 <html>
 <head>
@@ -58,15 +86,29 @@ cat > "$WEB_ROOT/index.html" <<EOF
 </body>
 </html>
 EOF
+else
+    echo -e "${YELLOW}[2/7] 跳过静态页面创建（反向代理模式）${NC}"
+fi
 
-# 3. 配置 Nginx HTTP 虚拟主机（用于证书申请前的验证）
+# 3. 配置 Nginx HTTP 虚拟主机
 echo -e "${YELLOW}[3/7] 配置 Nginx HTTP 站点...${NC}"
-cat > "$NGINX_CONF" <<EOF
+NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
+
+# 根据是否包含 www 生成 server_name
+if [[ "$APPLY_WWW" =~ ^[Yy]$ ]]; then
+    SERVER_NAMES="$DOMAIN www.$DOMAIN"
+else
+    SERVER_NAMES="$DOMAIN"
+fi
+
+# 生成配置文件（HTTP 部分，用于证书验证）
+if [ "$DEPLOY_MODE" == "static" ]; then
+    cat > "$NGINX_CONF" <<EOF
 server {
     listen 80;
     listen [::]:80;
 
-    server_name $DOMAIN www.$DOMAIN;
+    server_name $SERVER_NAMES;
 
     root $WEB_ROOT;
     index index.html index.htm;
@@ -77,29 +119,57 @@ server {
     location / {
         try_files \$uri \$uri/ =404;
     }
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
 }
 EOF
+else
+    cat > "$NGINX_CONF" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
 
-# 启用站点
+    server_name $SERVER_NAMES;
+
+    access_log /var/log/nginx/$DOMAIN.access.log;
+    error_log /var/log/nginx/$DOMAIN.error.log;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        proxy_pass $BACKEND;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 90;
+    }
+}
+EOF
+fi
+
 ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
-
-# 测试 Nginx 配置
 nginx -t
-
-# 重载 Nginx
 systemctl reload nginx
 systemctl enable nginx
 
-# 4. 配置防火墙（UFW）
+# 4. 配置防火墙
 echo -e "${YELLOW}[4/7] 配置防火墙规则...${NC}"
 ufw allow 22/tcp comment 'SSH'
 ufw allow 80/tcp comment 'HTTP'
 ufw allow 443/tcp comment 'HTTPS'
 ufw --force enable
 
-# 5. 申请 SSL 证书（Let's Encrypt）
-echo -e "${YELLOW}[5/7] 申请 SSL 证书（请确保域名已正确解析到本服务器 IP）...${NC}"
-certbot --nginx -d "$DOMAIN" -d "www.$DOMAIN" \
+# 5. 申请 SSL 证书
+echo -e "${YELLOW}[5/7] 申请 SSL 证书...${NC}"
+certbot --nginx $CERTBOT_DOMAINS \
     --email "$EMAIL" \
     --agree-tos \
     --no-eff-email \
@@ -112,28 +182,36 @@ certbot --nginx -d "$DOMAIN" -d "www.$DOMAIN" \
         exit 1
     }
 
-# 6. 验证 HTTPS 并输出信息
+# 6. 验证 HTTPS 配置（Certbot 已自动修改配置文件）
 echo -e "${YELLOW}[6/7] 验证 HTTPS 配置...${NC}"
 systemctl reload nginx
 
-# 7. 设置证书自动续期（Certbot 已自动创建定时任务）
+# 7. 证书自动续期
 echo -e "${YELLOW}[7/7] 验证证书自动续期定时任务...${NC}"
 systemctl is-active certbot.timer >/dev/null 2>&1 || {
     echo -e "${YELLOW}未检测到 certbot.timer，正在手动添加...${NC}"
     systemctl enable --now certbot.timer
 }
 
-# 完成提示
 IP_ADDR=$(curl -s ifconfig.me)
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN} ✅ 部署成功！${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo -e "网站目录: ${WEB_ROOT}"
+if [ "$DEPLOY_MODE" == "static" ]; then
+    echo -e "网站目录: ${WEB_ROOT}"
+else
+    echo -e "代理后端: ${BACKEND}"
+fi
 echo -e "访问地址: ${GREEN}https://$DOMAIN${NC}"
 echo -e "服务器 IP: ${IP_ADDR}"
 echo -e ""
-echo -e "证书自动续期: ${GREEN}已启用${NC} (定时任务: systemctl status certbot.timer)"
+echo -e "证书自动续期: ${GREEN}已启用${NC}"
 echo -e "测试续期命令: sudo certbot renew --dry-run"
 echo -e ""
-echo -e "如需修改网页，请编辑: ${WEB_ROOT}/index.html"
+if [ "$DEPLOY_MODE" == "static" ]; then
+    echo -e "如需修改网页，请编辑: ${WEB_ROOT}/index.html"
+else
+    echo -e "如需修改代理配置，请编辑: ${NGINX_CONF}"
+    echo -e "修改后执行: sudo nginx -t && sudo systemctl reload nginx"
+fi
 echo -e "${GREEN}========================================${NC}"
