@@ -4,7 +4,7 @@
 # 功能：
 #   1. Nginx HTTPS 网站（静态 / 反向代理 Docker）
 #   2. Apache WebDAV 文件服务器
-#   自动换源、修复 DNS，新手友好
+#   自动换源、修复 DNS（可选，支持恢复官方源），新手友好
 # ============================================================
 
 set -e
@@ -25,17 +25,28 @@ fi
 # 获取系统代号
 CODENAME=$(lsb_release -cs 2>/dev/null || echo "unknown")
 
-# -------------------- 通用函数：换源与修复 DNS --------------------
-function setup_sources_and_dns() {
-    echo -e "${YELLOW}[前置任务] 更换阿里云源并修复 DNS...${NC}"
+# 官方源备份文件路径
+BACKUP_SOURCES="/etc/apt/sources.list.bak.original"
 
-    # 备份 sources.list
-    if [ -f /etc/apt/sources.list ]; then
-        cp /etc/apt/sources.list /etc/apt/sources.list.bak.$(date +%Y%m%d%H%M%S)
-    fi
+# -------------------- 镜像源管理函数 --------------------
+function manage_sources() {
+    echo -e "${YELLOW}========================================${NC}"
+    echo -e "${GREEN}       镜像源管理${NC}"
+    echo -e "${YELLOW}========================================${NC}"
+    echo "1) 更换为阿里云镜像源（推荐国内服务器）"
+    echo "2) 恢复官方 Ubuntu 源"
+    echo "3) 保持当前源不变，继续"
+    read -p "请选择操作 [1-3]: " src_choice
 
-    # 写入阿里云源（适配版本代号）
-    cat > /etc/apt/sources.list <<EOF
+    case $src_choice in
+        1)
+            # 备份当前源（如果尚未备份过官方源）
+            if [ ! -f "$BACKUP_SOURCES" ] && [ -f /etc/apt/sources.list ]; then
+                cp /etc/apt/sources.list "$BACKUP_SOURCES"
+                echo -e "${GREEN}已备份官方源至 $BACKUP_SOURCES${NC}"
+            fi
+            # 写入阿里云源
+            cat > /etc/apt/sources.list <<EOF
 # 阿里云镜像源 - ${CODENAME}
 deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse
 deb-src http://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse
@@ -49,21 +60,60 @@ deb-src http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-updates main restricted un
 deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-backports main restricted universe multiverse
 deb-src http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-backports main restricted universe multiverse
 EOF
+            echo -e "${GREEN}已更换为阿里云镜像源${NC}"
+            apt update
+            ;;
+        2)
+            if [ -f "$BACKUP_SOURCES" ]; then
+                cp "$BACKUP_SOURCES" /etc/apt/sources.list
+                echo -e "${GREEN}已恢复官方源${NC}"
+                apt update
+            else
+                echo -e "${RED}未找到官方源备份文件，无法恢复${NC}"
+                echo -e "您可手动编辑 /etc/apt/sources.list"
+            fi
+            ;;
+        3)
+            echo -e "${YELLOW}保持当前源不变${NC}"
+            ;;
+        *)
+            echo -e "${RED}无效选择，保持当前源${NC}"
+            ;;
+    esac
+}
 
-    # 修复 DNS
-    systemctl stop systemd-resolved 2>/dev/null || true
-    systemctl disable systemd-resolved 2>/dev/null || true
-    rm -f /etc/resolv.conf
-    cat > /etc/resolv.conf <<EOF
+# -------------------- DNS 修复函数 --------------------
+function fix_dns() {
+    echo -e "${YELLOW}========================================${NC}"
+    echo -e "${GREEN}       DNS 修复（可选）${NC}"
+    echo -e "${YELLOW}========================================${NC}"
+    echo "当前 DNS 配置："
+    cat /etc/resolv.conf 2>/dev/null || echo "无法读取 /etc/resolv.conf"
+    echo ""
+    read -p "是否修复 DNS（使用阿里云+Google DNS）？(y/n): " dns_fix
+    if [[ "$dns_fix" =~ ^[Yy]$ ]]; then
+        systemctl stop systemd-resolved 2>/dev/null || true
+        systemctl disable systemd-resolved 2>/dev/null || true
+        rm -f /etc/resolv.conf
+        cat > /etc/resolv.conf <<EOF
 nameserver 223.5.5.5
 nameserver 223.6.6.6
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 EOF
-    chattr +i /etc/resolv.conf
+        chattr +i /etc/resolv.conf
+        echo -e "${GREEN}DNS 已修复并锁定${NC}"
+    else
+        echo -e "${YELLOW}跳过 DNS 修复${NC}"
+    fi
+}
 
-    apt update
-    echo -e "${GREEN}源与 DNS 配置完成${NC}"
+# -------------------- 前置通用优化 --------------------
+function setup_environment() {
+    echo -e "${YELLOW}[前置任务] 系统环境优化${NC}"
+    manage_sources
+    fix_dns
+    echo -e "${GREEN}环境优化完成${NC}"
 }
 
 # -------------------- 功能1：Nginx HTTPS 部署 --------------------
@@ -257,8 +307,8 @@ EOF
 
 # -------------------- 主菜单 --------------------
 function main_menu() {
-    # 先执行通用优化
-    setup_sources_and_dns
+    # 先执行环境优化（可交互选择源和DNS）
+    setup_environment
 
     while true; do
         echo -e "${YELLOW}========================================${NC}"
@@ -266,14 +316,16 @@ function main_menu() {
         echo -e "${YELLOW}========================================${NC}"
         echo "1) 安装 Nginx + HTTPS（静态网站/反向代理）"
         echo "2) 安装 Apache WebDAV 文件服务器"
-        echo "3) 退出脚本"
+        echo "3) 重新配置镜像源 / DNS"
+        echo "4) 退出脚本"
         echo -e "${YELLOW}========================================${NC}"
         read -p "请输入数字选择功能: " choice
 
         case $choice in
             1) install_nginx_https ;;
             2) install_webdav ;;
-            3) echo -e "${GREEN}再见！${NC}"; exit 0 ;;
+            3) setup_environment ;;
+            4) echo -e "${GREEN}再见！${NC}"; exit 0 ;;
             *) echo -e "${RED}无效输入，请重新选择${NC}" ;;
         esac
 
