@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================
-# 超级一键部署脚本（Ubuntu/Debian）
+# 超级一键部署脚本（Ubuntu/Debian） - 增强版
 # 功能：
-#   1. Nginx HTTPS 网站（静态 / 反向代理 Docker）
+#   1. Nginx HTTPS 网站（自定义静态目录 / 任意反向代理）
 #   2. Apache WebDAV 文件服务器
 #   自动换源、修复 DNS（可选，支持恢复官方源），新手友好
 # ============================================================
@@ -116,10 +116,10 @@ function setup_environment() {
     echo -e "${GREEN}环境优化完成${NC}"
 }
 
-# -------------------- 功能1：Nginx HTTPS 部署 --------------------
+# -------------------- 功能1：Nginx HTTPS 部署（增强版） --------------------
 function install_nginx_https() {
     echo -e "${YELLOW}========================================${NC}"
-    echo -e "${GREEN}   Nginx HTTPS 一键部署${NC}"
+    echo -e "${GREEN}   Nginx HTTPS 一键部署（增强版）${NC}"
     echo -e "${YELLOW}========================================${NC}"
 
     read -p "请输入你的域名（例如 example.com）: " DOMAIN
@@ -131,18 +131,43 @@ function install_nginx_https() {
     fi
 
     echo -e "${BLUE}请选择部署模式：${NC}"
-    echo "  1) 静态网站（提供本地 HTML 文件）"
-    echo "  2) 反向代理（转发到 Docker 容器或本地服务）"
+    echo "  1) 静态文件托管（自定义本地目录）"
+    echo "  2) 反向代理（转发到任意 URL / IP:端口）"
     read -p "请输入数字 [1 或 2]: " MODE
 
     if [ "$MODE" == "1" ]; then
         DEPLOY_MODE="static"
-        WEB_ROOT="/var/www/$DOMAIN/html"
-        echo -e "${GREEN}静态网站模式，根目录：$WEB_ROOT${NC}"
+        read -p "请输入静态文件存放的绝对路径（例如 /home/user/www）: " STATIC_PATH
+        if [ -z "$STATIC_PATH" ]; then
+            echo -e "${RED}路径不能为空！${NC}"
+            return 1
+        fi
+        # 如果目录不存在则创建
+        if [ ! -d "$STATIC_PATH" ]; then
+            mkdir -p "$STATIC_PATH"
+            echo -e "${YELLOW}目录 $STATIC_PATH 不存在，已自动创建${NC}"
+        fi
+        # 确保 nginx 有权限读取
+        chown -R www-data:www-data "$STATIC_PATH" 2>/dev/null || chown -R $SUDO_USER:$SUDO_USER "$STATIC_PATH"
+        chmod -R 755 "$STATIC_PATH"
+        # 可选：生成一个默认首页
+        if [ ! -f "$STATIC_PATH/index.html" ]; then
+            cat > "$STATIC_PATH/index.html" <<EOF
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>$DOMAIN</title></head>
+<body><h1>🎉 静态网站已就绪！</h1><p>域名: $DOMAIN</p><p>目录: $STATIC_PATH</p></body></html>
+EOF
+        fi
+        echo -e "${GREEN}静态文件模式，根目录：$STATIC_PATH${NC}"
+
     elif [ "$MODE" == "2" ]; then
         DEPLOY_MODE="proxy"
-        read -p "请输入后端服务地址（例如 127.0.0.1:4000，默认 http://127.0.0.1:4000）: " BACKEND
-        BACKEND=${BACKEND:-127.0.0.1:4000}
+        read -p "请输入后端目标地址（支持 http://IP:端口、https://域名 等）: " BACKEND
+        if [ -z "$BACKEND" ]; then
+            echo -e "${RED}目标地址不能为空！${NC}"
+            return 1
+        fi
+        # 如果用户未写协议，默认加 http://
         if [[ ! "$BACKEND" =~ ^https?:// ]]; then
             BACKEND="http://$BACKEND"
         fi
@@ -155,36 +180,37 @@ function install_nginx_https() {
     # 安装依赖
     apt install -y curl wget nginx certbot python3-certbot-nginx ufw
 
-    # 静态网站准备
-    if [ "$DEPLOY_MODE" == "static" ]; then
-        mkdir -p "$WEB_ROOT"
-        chown -R $SUDO_USER:$SUDO_USER /var/www/$DOMAIN
-        chmod -R 755 /var/www/$DOMAIN
-        cat > "$WEB_ROOT/index.html" <<EOF
-<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>$DOMAIN</title></head>
-<body><h1>🎉 HTTPS 部署成功！</h1><p>$DOMAIN</p></body></html>
-EOF
-    fi
-
-    # Nginx HTTP 配置
+    # 生成 Nginx HTTP 配置（用于证书申请）
     NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
     if [ "$DEPLOY_MODE" == "static" ]; then
         cat > "$NGINX_CONF" <<EOF
 server {
-    listen 80; listen [::]:80;
+    listen 80;
+    listen [::]:80;
     server_name $DOMAIN;
-    root $WEB_ROOT; index index.html;
-    location /.well-known/acme-challenge/ { root /var/www/html; }
-    location / { try_files \$uri \$uri/ =404; }
+    root $STATIC_PATH;
+    index index.html index.htm;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
 }
 EOF
-    else
+    else  # proxy 模式
         cat > "$NGINX_CONF" <<EOF
 server {
-    listen 80; listen [::]:80;
+    listen 80;
+    listen [::]:80;
     server_name $DOMAIN;
-    location /.well-known/acme-challenge/ { root /var/www/html; }
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
     location / {
         proxy_pass $BACKEND;
         proxy_set_header Host \$host;
@@ -196,17 +222,18 @@ server {
 EOF
     fi
 
+    # 启用站点
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
     nginx -t && systemctl reload nginx
     systemctl enable nginx
 
-    # 防火墙
+    # 防火墙放行
     ufw allow 22/tcp; ufw allow 80/tcp; ufw allow 443/tcp; ufw --force enable
 
-    # 申请证书
+    # 申请 SSL 证书（使用 certbot 自动配置并重定向到 HTTPS）
     certbot --nginx -d "$DOMAIN" --email "$EMAIL" --agree-tos --no-eff-email --redirect --non-interactive --keep-until-expiring
 
-    # 自动续期
+    # 自动续期定时器
     systemctl enable --now certbot.timer 2>/dev/null || true
 
     IP=$(curl -s ifconfig.me)
@@ -214,10 +241,15 @@ EOF
     echo -e "${GREEN} ✅ Nginx HTTPS 部署完成！${NC}"
     echo -e "访问地址：${BLUE}https://$DOMAIN${NC}"
     echo -e "服务器IP：$IP"
+    if [ "$DEPLOY_MODE" == "static" ]; then
+        echo -e "静态文件目录：$STATIC_PATH"
+    else
+        echo -e "反向代理目标：$BACKEND"
+    fi
     echo -e "${GREEN}========================================${NC}"
 }
 
-# -------------------- 功能2：WebDAV 部署 --------------------
+# -------------------- 功能2：WebDAV 部署（保持不变） --------------------
 function install_webdav() {
     echo -e "${YELLOW}========================================${NC}"
     echo -e "${GREEN}   Apache WebDAV 一键部署${NC}"
@@ -314,7 +346,7 @@ function main_menu() {
         echo -e "${YELLOW}========================================${NC}"
         echo -e "${GREEN}       超级一键部署脚本主菜单${NC}"
         echo -e "${YELLOW}========================================${NC}"
-        echo "1) 安装 Nginx + HTTPS（静态网站/反向代理）"
+        echo "1) 安装 Nginx + HTTPS（静态目录 / 反向代理）"
         echo "2) 安装 Apache WebDAV 文件服务器"
         echo "3) 重新配置镜像源 / DNS"
         echo "4) 退出脚本"
