@@ -1,6 +1,6 @@
 #!/bin/bash
 # Nginx HTTPS 一键安装脚本（Ubuntu 24.04.1 x64）
-# 支持静态网站 / Docker 容器反向代理，Let's Encrypt 免费证书，自动续期
+# 支持静态网站 / Docker 反向代理，Let's Encrypt 免费证书，自动续期
 
 set -e
 
@@ -28,10 +28,6 @@ if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
     exit 1
 fi
 
-# 询问是否同时申请 www 子域名
-read -p "是否同时为 www.$DOMAIN 申请证书？(y/n) [默认 n]: " APPLY_WWW
-APPLY_WWW=${APPLY_WWW:-n}
-
 # 选择部署模式
 echo -e "${BLUE}请选择部署模式：${NC}"
 echo "  1) 静态网站（提供本地 HTML 文件）"
@@ -44,20 +40,20 @@ if [ "$MODE" == "1" ]; then
     echo -e "${GREEN}已选择：静态网站模式，文件根目录为 $WEB_ROOT${NC}"
 elif [ "$MODE" == "2" ]; then
     DEPLOY_MODE="proxy"
-    read -p "请输入后端服务地址（默认 http://127.0.0.1:4000）: " BACKEND
-    BACKEND=${BACKEND:-http://127.0.0.1:4000}
+    read -p "请输入后端服务地址（例如 127.0.0.1:4000，默认 http://127.0.0.1:4000）: " BACKEND
+    BACKEND=${BACKEND:-127.0.0.1:4000}
+    # 智能补全 http:// 前缀
+    if [[ ! "$BACKEND" =~ ^https?:// ]]; then
+        BACKEND="http://$BACKEND"
+    fi
     echo -e "${GREEN}已选择：反向代理模式，转发到 $BACKEND${NC}"
 else
     echo -e "${RED}无效选择，退出脚本${NC}"
     exit 1
 fi
 
-# 构建 certbot 域名参数
+# 构建 certbot 域名参数（仅主域名）
 CERTBOT_DOMAINS="-d $DOMAIN"
-if [[ "$APPLY_WWW" =~ ^[Yy]$ ]]; then
-    CERTBOT_DOMAINS="$CERTBOT_DOMAINS -d www.$DOMAIN"
-    echo -e "${YELLOW}注意：请确保 www.$DOMAIN 已正确解析到本服务器 IP${NC}"
-fi
 
 # 1. 系统更新与基础依赖
 echo -e "${YELLOW}[1/7] 更新系统包并安装依赖...${NC}"
@@ -94,12 +90,8 @@ fi
 echo -e "${YELLOW}[3/7] 配置 Nginx HTTP 站点...${NC}"
 NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
 
-# 根据是否包含 www 生成 server_name
-if [[ "$APPLY_WWW" =~ ^[Yy]$ ]]; then
-    SERVER_NAMES="$DOMAIN www.$DOMAIN"
-else
-    SERVER_NAMES="$DOMAIN"
-fi
+# server_name 仅使用主域名
+SERVER_NAMES="$DOMAIN"
 
 # 生成配置文件（HTTP 部分，用于证书验证）
 if [ "$DEPLOY_MODE" == "static" ]; then
