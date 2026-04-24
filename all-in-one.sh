@@ -249,7 +249,7 @@ EOF
     echo -e "${GREEN}========================================${NC}"
 }
 
-# -------------------- 功能2：WebDAV 部署（保持不变） --------------------
+# -------------------- 功能2：WebDAV 部署（支持多线程下载） --------------------
 function install_webdav() {
     echo -e "${YELLOW}========================================${NC}"
     echo -e "${GREEN}   Apache WebDAV 一键部署${NC}"
@@ -260,8 +260,6 @@ function install_webdav() {
     WEBDAV_USER="movemama"
     WEBDAV_PASS="qq123456"
     WEBDAV_ROOT="/var/www/webdav"
-    MAX_UPLOAD="5368709120"  # 5GB
-
     read -p "请输入域名 [默认 $WEBDAV_DOMAIN]: " input
     [ -n "$input" ] && WEBDAV_DOMAIN="$input"
     read -p "请输入用户名 [默认 $WEBDAV_USER]: " input
@@ -281,7 +279,7 @@ function install_webdav() {
 
     apt install -y apache2 apache2-utils
 
-    a2enmod dav dav_fs auth_basic
+    a2enmod dav dav_fs auth_basic rewrite headers
 
     mkdir -p "$WEBDAV_ROOT"
     chown -R www-data:www-data "$WEBDAV_ROOT"
@@ -298,7 +296,10 @@ function install_webdav() {
 <VirtualHost *:80>
     ServerName $WEBDAV_DOMAIN
     DocumentRoot $WEBDAV_ROOT
-    LimitRequestBody $MAX_UPLOAD
+
+    EnableSendfile Off
+    EnableMMAP Off
+
     DavLockDB /var/lock/apache2/DAVLock
 
     <Directory $WEBDAV_ROOT>
@@ -307,14 +308,21 @@ function install_webdav() {
         AuthName "WebDAV"
         AuthUserFile /etc/apache2/webdav.passwd
         Require valid-user
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride All
+
+        RewriteEngine On
+        RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+        RewriteCond %{REQUEST_FILENAME} -f [OR]
+        RewriteCond %{REQUEST_FILENAME} -d
+        RewriteRule .* - [H=default-handler]
+
+        Header always set Accept-Ranges "bytes"
 
         <FilesMatch "\.txt$">
             Require all granted
             ForceType 'text/plain; charset=UTF-8'
         </FilesMatch>
-
-        Options Indexes FollowSymLinks MultiViews
-        AllowOverride All
     </Directory>
 
     ErrorLog \${APACHE_LOG_DIR}/webdav_error.log
