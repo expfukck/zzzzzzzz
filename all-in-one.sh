@@ -224,7 +224,8 @@ EOF
 
     # 启用站点
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
-    nginx -t && systemctl reload nginx
+    # 修复点：先检查配置，再用 restart 保证服务启动（即使之前 inactive）
+    nginx -t && systemctl restart nginx
     systemctl enable nginx
 
     # 防火墙放行
