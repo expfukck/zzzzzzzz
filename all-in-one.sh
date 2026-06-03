@@ -237,6 +237,8 @@ EOF
     # 自动续期定时器
     systemctl enable --now certbot.timer 2>/dev/null || true
 
+    # 防火墙放行自定义端口
+    ufw allow $WEBDAV_PORT/tcp 2>/dev/null || true
     IP=$(curl -s ifconfig.me)
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN} ✅ Nginx HTTPS 部署完成！${NC}"
@@ -260,9 +262,12 @@ function install_webdav() {
     WEBDAV_DOMAIN="www1.movemama.cn"
     WEBDAV_USER="movemama"
     WEBDAV_PASS="qq123456"
+    WEBDAV_PORT="9520"
     WEBDAV_ROOT="/var/www/webdav"
     read -p "请输入域名 [默认 $WEBDAV_DOMAIN]: " input
     [ -n "$input" ] && WEBDAV_DOMAIN="$input"
+    read -p "请输入端口 [默认 $WEBDAV_PORT]: " input
+    [ -n "$input" ] && WEBDAV_PORT="$input"
     read -p "请输入用户名 [默认 $WEBDAV_USER]: " input
     [ -n "$input" ] && WEBDAV_USER="$input"
     read -p "请输入密码 [默认 $WEBDAV_PASS]: " input
@@ -272,6 +277,7 @@ function install_webdav() {
 
     echo -e "${BLUE}配置确认：${NC}"
     echo -e "域名: $WEBDAV_DOMAIN"
+    echo -e "端口: $WEBDAV_PORT"
     echo -e "用户: $WEBDAV_USER"
     echo -e "密码: $WEBDAV_PASS"
     echo -e "目录: $WEBDAV_ROOT"
@@ -294,7 +300,8 @@ function install_webdav() {
     chown www-data:www-data /var/lock/apache2
 
     cat > /etc/apache2/sites-available/webdav.conf <<EOF
-<VirtualHost *:80>
+Listen $WEBDAV_PORT
+<VirtualHost *:$WEBDAV_PORT>
     ServerName $WEBDAV_DOMAIN
     DocumentRoot $WEBDAV_ROOT
 
@@ -337,10 +344,14 @@ EOF
     systemctl restart apache2
     systemctl enable apache2
 
+    # 防火墙放行自定义端口
+    ufw allow $WEBDAV_PORT/tcp 2>/dev/null || true
     IP=$(curl -s ifconfig.me)
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN} ✅ WebDAV 部署完成！${NC}"
-    echo -e "访问地址：${BLUE}http://$WEBDAV_DOMAIN/${NC}"
+    echo -e "访问地址：${BLUE}http://$WEBDAV_DOMAIN:$WEBDAV_PORT/${NC}"
+    echo -e "局域网访问：${BLUE}http://$IP:$WEBDAV_PORT/${NC}"
+    echo -e "端口：$WEBDAV_PORT"
     echo -e "用户名：$WEBDAV_USER  密码：$WEBDAV_PASS"
     echo -e "服务器IP：$IP"
     echo -e "${GREEN}========================================${NC}"
