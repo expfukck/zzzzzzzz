@@ -1,18 +1,13 @@
 #!/bin/bash
 # ============================================================
-# 超级一键部署脚本（Ubuntu/Debian） - 增强版 v3.0
+# 超级一键部署脚本（Ubuntu/Debian） - 增强版 v3.1
 # 功能：
 #   1. Nginx HTTPS 网站（自定义静态目录 / 任意反向代理）
 #   2. Apache WebDAV 文件服务器
 #   DNS 修复（可选），新手友好
-# 修复：
-#   - Listen 指令位置修正（解决 Cannot define multiple Listeners）
-#   - 移除 set -e 与交互冲突
-#   - 兼容 Debian/Ubuntu 双系统
-#   - 输入校验、端口冲突检测
-#   - 配置自动备份
-#   - 改进 DNS 修复方式（不再破坏 systemd-resolved）
-#   - v3.0：移除镜像源管理功能
+# 更新日志 (v3.1)：
+#   - 新增自动释放被占用端口功能（无需手动确认）
+#   - 优化进程 PID 提取逻辑，兼容性更强
 # ============================================================
 
 # 颜色定义
@@ -39,6 +34,31 @@ function check_port() {
         return 1
     fi
     return 0
+}
+
+# 自动释放被占用的端口
+function free_port() {
+    local port=$1
+    # 提取占用该端口的进程 PID (兼容多种 ss 输出格式)
+    local pids
+    pids=$(ss -tlnp 2>/dev/null | grep ":${port}\s" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
+    
+    if [ -n "$pids" ]; then
+        echo -e "${YELLOW}⚠️  检测到端口 $port 被占用 (PID: $pids)，正在自动释放...${NC}"
+        # 1. 先尝试优雅终止
+        kill $pids 2>/dev/null
+        sleep 1
+        
+        # 2. 检查是否已释放，若未释放则强制杀死
+        local remaining
+        remaining=$(ss -tlnp 2>/dev/null | grep ":${port}\s" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
+        if [ -n "$remaining" ]; then
+            echo -e "${YELLOW}   正常终止失败，正在强制杀死进程...${NC}"
+            kill -9 $remaining 2>/dev/null
+            sleep 1
+        fi
+        echo -e "${GREEN}✅ 端口 $port 已成功释放${NC}"
+    fi
 }
 
 # 校验端口（1-65535）
@@ -145,14 +165,9 @@ function install_nginx_https() {
         return 1
     fi
 
-    for port in 80 443; do
-        if ! check_port $port; then
-            echo -e "${YELLOW}警告：端口 $port 已被占用${NC}"
-            ss -tlnp | grep ":${port}\s"
-            read -p "是否继续？(y/n): " cont
-            [[ ! "$cont" =~ ^[Yy]$ ]] && return 1
-        fi
-    done
+    # ✅ 自动释放 80 和 443 端口
+    free_port 80
+    free_port 443
 
     echo -e "${BLUE}请选择部署模式：${NC}"
     echo "  1) 静态文件托管（自定义本地目录）"
@@ -317,11 +332,8 @@ function install_webdav() {
         return 1
     fi
 
-    if ! check_port "$WEBDAV_PORT"; then
-        echo -e "${RED}端口 $WEBDAV_PORT 已被占用！${NC}"
-        ss -tlnp | grep ":${WEBDAV_PORT}\s"
-        return 1
-    fi
+    # ✅ 自动释放 WebDAV 端口
+    free_port "$WEBDAV_PORT"
 
     if ! validate_path "$WEBDAV_ROOT"; then
         echo -e "${RED}存储目录必须是绝对路径${NC}"
