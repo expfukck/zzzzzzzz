@@ -1,10 +1,14 @@
 #!/bin/bash
 # ============================================================
-# 超级一键部署脚本（Ubuntu/Debian） - 增强版 v3.1
+# 超级一键部署脚本（Ubuntu/Debian） - 增强版 v3.2
 # 功能：
 #   1. Nginx HTTPS 网站（自定义静态目录 / 任意反向代理）
 #   2. Apache WebDAV 文件服务器
 #   DNS 修复（可选），新手友好
+# 更新日志 (v3.2)：
+#   - Nginx HTTPS 支持多域名证书（自动附带 www 子域名）
+#   - 新增可选泛域名通配符（*.example.com）支持
+#   - 修复域名验证正则，兼容裸域名和含连字符域名
 # 更新日志 (v3.1)：
 #   - 新增自动释放被占用端口功能（无需手动确认）
 #   - 优化进程 PID 提取逻辑，兼容性更强
@@ -70,10 +74,14 @@ function validate_port() {
     return 0
 }
 
-# 校验域名
+# 校验域名（支持裸域名、www、* 通配符前缀）
 function validate_domain() {
     local domain=$1
-    if ! [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$ ]]; then
+    # 去掉可能的 *. 或 www. 前缀再验证
+    local bare_domain
+    bare_domain=$(echo "$domain" | sed -E 's/^(\*\.|www\.)//')
+    local domain_regex='^([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}$'
+    if ! [[ "$bare_domain" =~ $domain_regex ]]; then
         return 1
     fi
     return 0
@@ -152,7 +160,7 @@ function install_nginx_https() {
     echo -e "${GREEN}   Nginx HTTPS 一键部署（增强版）${NC}"
     echo -e "${YELLOW}========================================${NC}"
 
-    read -p "请输入你的域名（例如 example.com）: " DOMAIN
+    read -p "请输入你的主域名（例如 example.com 或 www.example.com）: " DOMAIN
     read -p "请输入你的邮箱（用于证书提醒）: " EMAIL
 
     if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
@@ -163,6 +171,113 @@ function install_nginx_https() {
     if ! validate_domain "$DOMAIN"; then
         echo -e "${RED}域名格式不正确${NC}"
         return 1
+    fi
+
+    # ---------- 多域名 / 泛域名处理 ----------
+    # 提取裸域名（去掉 www. 和 *. 前缀）
+    local BARE_DOMAIN
+    BARE_DOMAIN=$(echo "$DOMAIN" | sed -E 's/^(www\.|\*\.)//')
+
+    local CERT_DOMAINS=()          # certbot -d 参数列表
+    local NGINX_SERVER_NAMES=()    # Nginx server_name 列表
+
+    echo ""
+    echo -e "${YELLOW}┌─────────────────────────────────────┐${NC}"
+    echo -e "${YELLOW}│        🌐 多域名 / 泛域名配置        │${NC}"
+    echo -e "${YELLOW}└─────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "${BLUE}你的主域名：${GREEN}$DOMAIN${NC}"
+    echo -e "${BLUE}裸域名（去掉 www/* 后）：${GREEN}$BARE_DOMAIN${NC}"
+    echo ""
+
+    # 第一步：询问是否需要泛域名通配符证书
+    local USE_WILDCARD="n"
+    echo -e "${YELLOW}━━━ 泛域名通配符证书 ━━━${NC}"
+    echo -e "泛域名证书可一次覆盖 *.${BARE_DOMAIN} 下的所有子域名"
+    echo -e "（如 a.${BARE_DOMAIN}、b.${BARE_DOMAIN}、c.${BARE_DOMAIN} 等全部生效）"
+    echo -e "${RED}⚠  泛域名证书必须使用 DNS 验证（手动添加 TXT 记录）${NC}"
+    echo -e "${RED}   不支持 HTTP 验证方式，需要你到 DNS 后台添加一条 TXT 记录${NC}"
+    echo ""
+    read -p "是否申请泛域名通配符证书 *.${BARE_DOMAIN}？(y/n，默认 n): " USE_WILDCARD
+
+    if [[ "$USE_WILDCARD" =~ ^[Yy]$ ]]; then
+        CERT_DOMAINS+=("*.${BARE_DOMAIN}")
+        CERT_DOMAINS+=("${BARE_DOMAIN}")
+        NGINX_SERVER_NAMES+=("*.${BARE_DOMAIN}")
+        NGINX_SERVER_NAMES+=("${BARE_DOMAIN}")
+        echo -e "${GREEN}✅ 将申请泛域名证书：*.$BARE_DOMAIN + $BARE_DOMAIN${NC}"
+        echo ""
+    else
+        # 不搞泛域名 → 智能匹配主域名 + www
+        CERT_DOMAINS+=("${DOMAIN}")
+        NGINX_SERVER_NAMES+=("${DOMAIN}")
+
+        # 如果用户输入的是裸域名（非 www 开头），自动反问是否加 www
+        if [[ ! "$DOMAIN" =~ ^www\. ]]; then
+            read -p "是否同时添加 www.${BARE_DOMAIN}？(y/n，默认 y): " ADD_WWW
+            if [[ ! "$ADD_WWW" =~ ^[Nn]$ ]]; then
+                CERT_DOMAINS+=("www.${BARE_DOMAIN}")
+                NGINX_SERVER_NAMES+=("www.${BARE_DOMAIN}")
+                echo -e "${GREEN}✅ 已添加 www.$BARE_DOMAIN${NC}"
+            fi
+        else
+            # 用户输入的是 www 开头，反问是否加裸域名
+            read -p "是否同时添加裸域名 ${BARE_DOMAIN}？(y/n，默认 y): " ADD_BARE
+            if [[ ! "$ADD_BARE" =~ ^[Nn]$ ]]; then
+                CERT_DOMAINS+=("${BARE_DOMAIN}")
+                NGINX_SERVER_NAMES+=("${BARE_DOMAIN}")
+                echo -e "${GREEN}✅ 已添加 $BARE_DOMAIN${NC}"
+            fi
+        fi
+        echo ""
+    fi
+
+    # 第二步：询问是否需要额外子域名
+    echo -e "${YELLOW}━━━ 额外子域名 ━━━${NC}"
+    echo -e "如果你还需要其他子域名（如 api.${BARE_DOMAIN}、cdn.${BARE_DOMAIN}），"
+    echo -e "可以在此逐个添加。直接回车跳过。"
+    echo ""
+    while true; do
+        read -p "添加额外子域名（直接回车跳过）: " EXTRA_SUB
+        if [ -z "$EXTRA_SUB" ]; then
+            break
+        fi
+        # 如果用户只输入了子域名前缀（如 api），自动补全
+        if [[ ! "$EXTRA_SUB" =~ \. ]]; then
+            EXTRA_SUB="${EXTRA_SUB}.${BARE_DOMAIN}"
+        fi
+        # 避免重复
+        local already_exists="n"
+        for d in "${CERT_DOMAINS[@]}"; do
+            if [ "$d" == "$EXTRA_SUB" ]; then
+                already_exists="y"
+                break
+            fi
+        done
+        if [ "$already_exists" == "y" ]; then
+            echo -e "${YELLOW}⚠  $EXTRA_SUB 已在列表中，跳过${NC}"
+        else
+            CERT_DOMAINS+=("$EXTRA_SUB")
+            NGINX_SERVER_NAMES+=("$EXTRA_SUB")
+            echo -e "${GREEN}✅ 已添加 $EXTRA_SUB${NC}"
+        fi
+    done
+
+    # 汇总确认
+    echo ""
+    echo -e "${YELLOW}┌─────────────────────────────────────┐${NC}"
+    echo -e "${YELLOW}│           📋 证书域名汇总            │${NC}"
+    echo -e "${YELLOW}└─────────────────────────────────────┘${NC}"
+    local CERT_LIST=""
+    for d in "${CERT_DOMAINS[@]}"; do
+        echo -e "  🔒 $d"
+        CERT_LIST="$CERT_LIST -d $d"
+    done
+    echo ""
+    read -p "确认以上域名列表？(y/n，默认 y): " CONFIRM_DOMAINS
+    if [[ "$CONFIRM_DOMAINS" =~ ^[Nn]$ ]]; then
+        echo -e "${YELLOW}已取消，返回主菜单${NC}"
+        return 0
     fi
 
     # ✅ 自动释放 80 和 443 端口
@@ -194,8 +309,8 @@ function install_nginx_https() {
         if [ ! -f "$STATIC_PATH/index.html" ]; then
             cat > "$STATIC_PATH/index.html" <<EOF
 <!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>$DOMAIN</title></head>
-<body><h1>🎉 静态网站已就绪！</h1><p>域名: $DOMAIN</p><p>目录: $STATIC_PATH</p></body></html>
+<html><head><meta charset="UTF-8"><title>$BARE_DOMAIN</title></head>
+<body><h1>🎉 静态网站已就绪！</h1><p>域名: $BARE_DOMAIN</p><p>目录: $STATIC_PATH</p></body></html>
 EOF
         fi
         echo -e "${GREEN}静态文件模式，根目录：$STATIC_PATH${NC}"
@@ -219,7 +334,11 @@ EOF
     echo -e "${BLUE}正在安装 Nginx 和 Certbot...${NC}"
     apt install -y curl wget nginx certbot python3-certbot-nginx ufw
 
-    NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
+    # 构建 server_name 字符串（空格分隔）
+    local SERVER_NAME_STR
+    SERVER_NAME_STR=$(IFS=' '; echo "${NGINX_SERVER_NAMES[*]}")
+
+    NGINX_CONF="/etc/nginx/sites-available/$BARE_DOMAIN"
     if [ -f "$NGINX_CONF" ]; then
         cp "$NGINX_CONF" "${NGINX_CONF}.bak.$(date +%s)"
         echo -e "${YELLOW}已备份原有配置${NC}"
@@ -230,7 +349,7 @@ EOF
 server {
     listen 80;
     listen [::]:80;
-    server_name $DOMAIN;
+    server_name $SERVER_NAME_STR;
     root $STATIC_PATH;
     index index.html index.htm;
 
@@ -248,7 +367,7 @@ EOF
 server {
     listen 80;
     listen [::]:80;
-    server_name $DOMAIN;
+    server_name $SERVER_NAME_STR;
 
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -281,7 +400,104 @@ EOF
     ufw --force enable 2>/dev/null || true
 
     echo -e "${BLUE}正在申请 SSL 证书...${NC}"
-    certbot --nginx -d "$DOMAIN" --email "$EMAIL" --agree-tos --no-eff-email --redirect --non-interactive --keep-until-expiring
+
+    if [[ "$USE_WILDCARD" =~ ^[Yy]$ ]]; then
+        # 泛域名证书 → 使用 DNS 手动验证
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}  泛域名证书需要 DNS 验证${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "接下来 certbot 会提示你添加一条 ${GREEN}_acme-challenge.${BARE_DOMAIN}${NC} 的 TXT 记录"
+        echo -e "请到你的域名 DNS 管理后台添加，${RED}等待 DNS 生效后再按回车继续${NC}"
+        echo ""
+        read -p "准备好了吗？按回车开始申请证书..."
+
+        certbot certonly --manual \
+            --preferred-challenges dns \
+            --agree-tos --no-eff-email \
+            --email "$EMAIL" \
+            --keep-until-expiring \
+            $CERT_LIST
+
+        if [ $? -eq 0 ]; then
+            # 手动创建带 SSL 的 Nginx 配置
+            local SSL_CONF="/etc/nginx/sites-available/${BARE_DOMAIN}-ssl"
+            if [ "$DEPLOY_MODE" == "static" ]; then
+                cat > "$SSL_CONF" <<EOF
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $SERVER_NAME_STR;
+
+    ssl_certificate     /etc/letsencrypt/live/${BARE_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${BARE_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    root $STATIC_PATH;
+    index index.html index.htm;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $SERVER_NAME_STR;
+    return 301 https://\$host\$request_uri;
+}
+EOF
+            else
+                cat > "$SSL_CONF" <<EOF
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $SERVER_NAME_STR;
+
+    ssl_certificate     /etc/letsencrypt/live/${BARE_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${BARE_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass $BACKEND;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $SERVER_NAME_STR;
+    return 301 https://\$host\$request_uri;
+}
+EOF
+            fi
+            ln -sf "$SSL_CONF" /etc/nginx/sites-enabled/
+            rm -f "$NGINX_CONF" /etc/nginx/sites-enabled/$(basename "$NGINX_CONF") 2>/dev/null || true
+
+            if ! nginx -t; then
+                echo -e "${RED}Nginx SSL 配置测试失败！${NC}"
+                return 1
+            fi
+            systemctl restart nginx
+        else
+            echo -e "${RED}证书申请失败，请检查 DNS TXT 记录是否正确添加${NC}"
+            return 1
+        fi
+    else
+        # 普通多域名证书 → 使用 HTTP 验证
+        certbot --nginx \
+            --agree-tos --no-eff-email \
+            --email "$EMAIL" \
+            --redirect --non-interactive \
+            --keep-until-expiring \
+            $CERT_LIST
+    fi
 
     systemctl enable --now certbot.timer 2>/dev/null || true
 
@@ -290,7 +506,10 @@ EOF
 
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN} ✅ Nginx HTTPS 部署完成！${NC}"
-    echo -e "访问地址：${BLUE}https://$DOMAIN${NC}"
+    echo -e "覆盖域名："
+    for d in "${CERT_DOMAINS[@]}"; do
+        echo -e "  🌐 https://$d"
+    done
     echo -e "服务器IP：$IP"
     if [ "$DEPLOY_MODE" == "static" ]; then
         echo -e "静态文件目录：$STATIC_PATH"
