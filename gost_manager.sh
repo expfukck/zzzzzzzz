@@ -1,3 +1,8 @@
+# 1. 清空旧配置
+> /etc/gost/socks5_list.conf
+systemctl restart gost-socks5
+
+# 2. 写入修正版脚本并运行
 cat << 'OUTER_EOF' > gost_manager.sh
 #!/bin/bash
 
@@ -74,7 +79,8 @@ add_proxy() {
     read -p "请输入新代理的密码 (直接回车默认 qq147258..): " PASSWORD
     PASSWORD=${PASSWORD:-qq147258..}
 
-    if grep -q ":${PORT}@" $CONF_FILE; then
+    # 修正：匹配格式是 @:端口
+    if grep -q "@:${PORT}" $CONF_FILE; then
         echo "❌ 端口 $PORT 已经被占用，请换一个端口！"
         return
     fi
@@ -135,12 +141,13 @@ delete_proxy() {
     echo "当前代理端口列表："
     grep -oP '@:\K[0-9]+' $CONF_FILE | nl -w2 -s'. '
     echo ""
-    read -p "请输入要删除的【端口号】(注意是端口数字，不是序号，例如 2889): " DELPORT
-    if ! grep -q ":${DELPORT}@" $CONF_FILE; then
+    read -p "请输入要删除的端口号 (例如 2889): " DELPORT
+    # 修正：匹配格式是 @:端口，不是 :端口@
+    if ! grep -q "@:${DELPORT}" $CONF_FILE; then
         echo "❌ 没有找到端口 $DELPORT 的代理"
         return
     fi
-    sed -i "/:${DELPORT}@/d" $CONF_FILE
+    sed -i "/@:${DELPORT}/d" $CONF_FILE
     setup_service
     echo "✅ 已删除端口 $DELPORT 的代理"
 }
