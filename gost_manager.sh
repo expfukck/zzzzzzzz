@@ -1,4 +1,4 @@
-# 1. 清空旧配置
+# 1. 清空旧的错误配置
 > /etc/gost/socks5_list.conf
 systemctl restart gost-socks5
 
@@ -79,7 +79,6 @@ add_proxy() {
     read -p "请输入新代理的密码 (直接回车默认 qq147258..): " PASSWORD
     PASSWORD=${PASSWORD:-qq147258..}
 
-    # 修正：匹配格式是 @:端口
     if grep -q "@:${PORT}" $CONF_FILE; then
         echo "❌ 端口 $PORT 已经被占用，请换一个端口！"
         return
@@ -142,7 +141,6 @@ delete_proxy() {
     grep -oP '@:\K[0-9]+' $CONF_FILE | nl -w2 -s'. '
     echo ""
     read -p "请输入要删除的端口号 (例如 2889): " DELPORT
-    # 修正：匹配格式是 @:端口，不是 :端口@
     if ! grep -q "@:${DELPORT}" $CONF_FILE; then
         echo "❌ 没有找到端口 $DELPORT 的代理"
         return
