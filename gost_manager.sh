@@ -1,8 +1,3 @@
-# 1. 清空旧的错误配置
-> /etc/gost/socks5_list.conf
-systemctl restart gost-socks5
-
-# 2. 写入修正版脚本并运行
 cat << 'OUTER_EOF' > gost_manager.sh
 #!/bin/bash
 
@@ -43,7 +38,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c '${GOST_BIN} $(cat ${CONF_FILE} | tr "\n" " ")'
+ExecStart=/bin/bash -c '${GOST_BIN} -D $(cat ${CONF_FILE} | tr "\n" " ")'
 Restart=on-failure
 RestartSec=5s
 
@@ -54,6 +49,11 @@ INNER_EOF
     systemctl enable gost-socks5
     systemctl restart gost-socks5
 }
+
+# 如果配置文件已存在，自动更新服务并重启以加载日志功能
+if [ -f "$GOST_BIN" ] && [ -f "$CONF_FILE" ]; then
+    setup_service
+fi
 
 get_public_ip() {
     IP=$(curl -s -4 --max-time 5 ifconfig.me)
@@ -150,6 +150,14 @@ delete_proxy() {
     echo "✅ 已删除端口 $DELPORT 的代理"
 }
 
+show_logs() {
+    echo ""
+    echo "正在显示最近 50 条代理日志（按 q 退出查看）..."
+    echo "=============================================="
+    journalctl -u gost-socks5 -n 50 --no-pager
+    echo "=============================================="
+}
+
 while true; do
     echo ""
     echo "===== gost SOCKS5 管理菜单 ====="
@@ -157,15 +165,17 @@ while true; do
     echo "2. 查看所有代理 (含代理链接)"
     echo "3. 删除代理"
     echo "4. 重启代理服务"
-    echo "5. 退出"
-    read -p "请输入选项 [1-5]: " choice
+    echo "5. 查看代理使用日志"
+    echo "6. 退出"
+    read -p "请输入选项 [1-6]: " choice
 
     case $choice in
         1) add_proxy ;;
         2) show_proxies ;;
         3) delete_proxy ;;
         4) systemctl restart gost-socks5; echo "✅ 代理服务已重启" ;;
-        5) exit 0 ;;
+        5) show_logs ;;
+        6) exit 0 ;;
         *) echo "❌ 无效选项，请重新输入" ;;
     esac
 done
