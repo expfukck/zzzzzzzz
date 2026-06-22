@@ -2,7 +2,7 @@ cat << 'OUTER_EOF' > gost_manager.sh
 #!/bin/bash
 
 if [[ $EUID -ne 0 ]]; then
-   echo "请使用 root 用户运行此脚本" 
+   echo "请使用 root 用户运行此脚本"
    exit 1
 fi
 
@@ -51,7 +51,6 @@ INNER_EOF
 }
 
 get_public_ip() {
-    # 优先取 IPv4，取不到再用 IPv6
     IP=$(curl -s -4 --max-time 5 ifconfig.me)
     if [ -z "$IP" ]; then
         IP=$(curl -s --max-time 5 ifconfig.me)
@@ -62,17 +61,18 @@ get_public_ip() {
 
 add_proxy() {
     install_gost
+    mkdir -p $CONF_DIR
     touch $CONF_FILE
-    
-    echo ""
-    read -p "请输入新代理的端口 (例如 2889): " PORT
-    read -p "请输入新代理的账号 (例如 mosdadce): " USERNAME
-    read -p "请输入新代理的密码 (例如 qq147258..): " PASSWORD
 
-    if [ -z "$PORT" ] || [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
-        echo "❌ 端口、账号、密码都不能为空！"
-        return
-    fi
+    echo ""
+    read -p "请输入新代理的端口 (直接回车默认 2889): " PORT
+    PORT=${PORT:-2889}
+
+    read -p "请输入新代理的账号 (直接回车默认 mosdadce): " USERNAME
+    USERNAME=${USERNAME:-mosdadce}
+
+    read -p "请输入新代理的密码 (直接回车默认 qq147258..): " PASSWORD
+    PASSWORD=${PASSWORD:-qq147258..}
 
     if grep -q ":${PORT}@" $CONF_FILE; then
         echo "❌ 端口 $PORT 已经被占用，请换一个端口！"
@@ -109,7 +109,6 @@ show_proxies() {
     if [ -s "$CONF_FILE" ]; then
         IP=$(get_public_ip)
         while IFS= read -r line; do
-            # 解析每一行: -L socks5://user:pass@:port
             INFO=$(echo "$line" | grep -oP 'socks5://\K.*')
             USERPASS=$(echo "$INFO" | awk -F'@:' '{print $1}')
             PORT=$(echo "$INFO" | awk -F'@:' '{print $2}')
@@ -121,11 +120,6 @@ show_proxies() {
             echo " 代理链接: socks5://${USERNAME}:${PASSWORD}@${IP}:${PORT}"
             echo "----------------------------------------------"
         done < $CONF_FILE
-        echo "软件配置示例（以 SwitchyOmega / Telegram 为例）："
-        echo "  类型: SOCKS5"
-        echo "  地址: $IP"
-        echo "  端口: 见上方"
-        echo "  账号/密码: 见上方"
     else
         echo "暂无配置，请先选择 [1] 增加代理"
     fi
@@ -141,12 +135,11 @@ delete_proxy() {
     echo "当前代理端口列表："
     grep -oP '@:\K[0-9]+' $CONF_FILE | nl -w2 -s'. '
     echo ""
-    read -p "请输入要删除的端口号: " DELPORT
+    read -p "请输入要删除的【端口号】(注意是端口数字，不是序号，例如 2889): " DELPORT
     if ! grep -q ":${DELPORT}@" $CONF_FILE; then
         echo "❌ 没有找到端口 $DELPORT 的代理"
         return
     fi
-    # 删除该行
     sed -i "/:${DELPORT}@/d" $CONF_FILE
     setup_service
     echo "✅ 已删除端口 $DELPORT 的代理"
