@@ -11,7 +11,6 @@ CONF_DIR="/etc/gost"
 CONF_FILE="${CONF_DIR}/socks5_list.conf"
 SERVICE_FILE="/etc/systemd/system/gost-socks5.service"
 
-# 安装基础环境和 gost 程序
 install_gost() {
     if [ -f "$GOST_BIN" ]; then return; fi
     echo "首次运行，正在安装依赖和 gost..."
@@ -31,7 +30,6 @@ install_gost() {
     mkdir -p $CONF_DIR
 }
 
-# 生成并重启 systemd 服务
 setup_service() {
     cat > $SERVICE_FILE <<INNER_EOF
 [Unit]
@@ -47,41 +45,49 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 INNER_EOF
-
     systemctl daemon-reload
     systemctl enable gost-socks5
     systemctl restart gost-socks5
 }
 
-# 增加新代理
+get_public_ip() {
+    # 优先取 IPv4，取不到再用 IPv6
+    IP=$(curl -s -4 --max-time 5 ifconfig.me)
+    if [ -z "$IP" ]; then
+        IP=$(curl -s --max-time 5 ifconfig.me)
+    fi
+    [ -z "$IP" ] && IP="你的VPS公网IP"
+    echo "$IP"
+}
+
 add_proxy() {
     install_gost
     touch $CONF_FILE
     
     echo ""
-    read -p "请输入新代理的端口 (例如 1081): " PORT
-    read -p "请输入新代理的账号 (例如 user2): " USERNAME
-    read -p "请输入新代理的密码 (例如 Pass456): " PASSWORD
+    read -p "请输入新代理的端口 (例如 2889): " PORT
+    read -p "请输入新代理的账号 (例如 mosdadce): " USERNAME
+    read -p "请输入新代理的密码 (例如 qq147258..): " PASSWORD
 
-    # 检查端口是否已存在
+    if [ -z "$PORT" ] || [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
+        echo "❌ 端口、账号、密码都不能为空！"
+        return
+    fi
+
     if grep -q ":${PORT}@" $CONF_FILE; then
         echo "❌ 端口 $PORT 已经被占用，请换一个端口！"
         return
     fi
 
-    # 写入配置文件
     echo "-L socks5://${USERNAME}:${PASSWORD}@:${PORT}" >> $CONF_FILE
-    
-    # 更新服务并重启
     setup_service
 
-    # 放行 UFW 防火墙
     if command -v ufw &> /dev/null; then
         ufw allow ${PORT}/tcp > /dev/null 2>&1
         ufw allow ${PORT}/udp > /dev/null 2>&1
     fi
 
-    IP=$(curl -s --max-time 5 ifconfig.me)
+    IP=$(get_public_ip)
     echo ""
     echo "✅ 新增代理成功！"
     echo "=============================================="
@@ -89,38 +95,79 @@ add_proxy() {
     echo " 代理端口:  $PORT"
     echo " 账号:      $USERNAME"
     echo " 密码:      $PASSWORD"
+    echo "----------------------------------------------"
+    echo " 软件可直接使用的代理链接："
+    echo " socks5://${USERNAME}:${PASSWORD}@${IP}:${PORT}"
     echo "=============================================="
-    echo "⚠️ 注意：如果是云服务器，请务必去网页控制台【安全组】放行 $PORT 端口！"
+    echo "⚠️ 云服务器请去网页控制台【安全组】放行 TCP $PORT 端口！"
 }
 
-# 查看所有代理
 show_proxies() {
     echo ""
     echo "当前已配置的所有 SOCKS5 代理："
-    echo "-----------------------------------"
+    echo "=============================================="
     if [ -s "$CONF_FILE" ]; then
-        grep -oP 'socks5://\K.*' $CONF_FILE | awk -F'@:' '{printf "账号密码: %-20s 端口: %s\n", $1, $2}'
+        IP=$(get_public_ip)
+        while IFS= read -r line; do
+            # 解析每一行: -L socks5://user:pass@:port
+            INFO=$(echo "$line" | grep -oP 'socks5://\K.*')
+            USERPASS=$(echo "$INFO" | awk -F'@:' '{print $1}')
+            PORT=$(echo "$INFO" | awk -F'@:' '{print $2}')
+            USERNAME=$(echo "$USERPASS" | awk -F':' '{print $1}')
+            PASSWORD=$(echo "$USERPASS" | awk -F':' '{print $2}')
+            echo " 端口:     $PORT"
+            echo " 账号:     $USERNAME"
+            echo " 密码:     $PASSWORD"
+            echo " 代理链接: socks5://${USERNAME}:${PASSWORD}@${IP}:${PORT}"
+            echo "----------------------------------------------"
+        done < $CONF_FILE
+        echo "软件配置示例（以 SwitchyOmega / Telegram 为例）："
+        echo "  类型: SOCKS5"
+        echo "  地址: $IP"
+        echo "  端口: 见上方"
+        echo "  账号/密码: 见上方"
     else
         echo "暂无配置，请先选择 [1] 增加代理"
     fi
-    echo "-----------------------------------"
+    echo "=============================================="
 }
 
-# 主菜单
+delete_proxy() {
+    echo ""
+    if [ ! -s "$CONF_FILE" ]; then
+        echo "当前没有任何代理可删除"
+        return
+    fi
+    echo "当前代理端口列表："
+    grep -oP '@:\K[0-9]+' $CONF_FILE | nl -w2 -s'. '
+    echo ""
+    read -p "请输入要删除的端口号: " DELPORT
+    if ! grep -q ":${DELPORT}@" $CONF_FILE; then
+        echo "❌ 没有找到端口 $DELPORT 的代理"
+        return
+    fi
+    # 删除该行
+    sed -i "/:${DELPORT}@/d" $CONF_FILE
+    setup_service
+    echo "✅ 已删除端口 $DELPORT 的代理"
+}
+
 while true; do
     echo ""
     echo "===== gost SOCKS5 管理菜单 ====="
-    echo "1. 增加新代理 (首次安装也选此)"
-    echo "2. 查看所有代理"
-    echo "3. 重启代理服务"
-    echo "4. 退出"
-    read -p "请输入选项 [1-4]: " choice
+    echo "1. 增加新代理"
+    echo "2. 查看所有代理 (含代理链接)"
+    echo "3. 删除代理"
+    echo "4. 重启代理服务"
+    echo "5. 退出"
+    read -p "请输入选项 [1-5]: " choice
 
     case $choice in
         1) add_proxy ;;
         2) show_proxies ;;
-        3) systemctl restart gost-socks5; echo "✅ 代理服务已重启" ;;
-        4) exit 0 ;;
+        3) delete_proxy ;;
+        4) systemctl restart gost-socks5; echo "✅ 代理服务已重启" ;;
+        5) exit 0 ;;
         *) echo "❌ 无效选项，请重新输入" ;;
     esac
 done
