@@ -1,138 +1,100 @@
 #!/bin/bash
 # ============================================================
-# 超级一键部署脚本（Ubuntu/Debian） - 增强版 v3.2
-# 功能：
-#   1. Nginx HTTPS 网站（自定义静态目录 / 任意反向代理）
-#   2. Apache WebDAV 文件服务器
-#   DNS 修复（可选），新手友好
-# 更新日志 (v3.2)：
-#   - Nginx HTTPS 支持多域名证书（自动附带 www 子域名）
-#   - 新增可选泛域名通配符（*.example.com）支持
-#   - 修复域名验证正则，兼容裸域名和含连字符域名
-# 更新日志 (v3.1)：
-#   - 新增自动释放被占用端口功能（无需手动确认）
-#   - 优化进程 PID 提取逻辑，兼容性更强
+# 超级一键部署脚本 v4.0（Ubuntu/Debian）
+#   1. Nginx HTTPS：静态 / 普通反代 / AI 反代（SSE+WS+长超时）
+#   2. Apache WebDAV
+#   3. DNS 修复
+# 变更摘要：
+#   - 新增 AI 反向代理模板（对齐生产 AI 站点配置）
+#   - 修复 Connection 头在 SSE/WS 场景互覆盖问题（map 动态判定）
+#   - 证书申请改 webroot 模式，不再让 certbot 改写 nginx 配置
+#   - 续期 deploy-hook 自动 reload nginx
+#   - 通配符证书提示使用 DNS API hook 实现真正自动续期
+#   - set -euo pipefail + 幂等性 + 端口释放安全化
 # ============================================================
+set -euo pipefail
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-# 信号处理（Ctrl+C 优雅退出）
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 trap 'echo -e "\n${RED}脚本被中断，退出${NC}"; exit 1' INT TERM
 
-# 检查 root 权限
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}请使用 sudo 或以 root 用户执行此脚本${NC}"
-    exit 1
-fi
+[ "$EUID" -ne 0 ] && { echo -e "${RED}请使用 sudo 或以 root 执行${NC}"; exit 1; }
+
+export DEBIAN_FRONTEND=noninteractive
 
 # -------------------- 工具函数 --------------------
-# 检查端口是否被占用
-function check_port() {
-    local port=$1
-    if ss -tlnp 2>/dev/null | grep -qE ":${port}(\s|$)"; then
-        return 1
-    fi
-    return 0
+check_port() {
+    ss -tlnp 2>/dev/null | grep -qE ":${1}(\s|$)"
 }
 
-# 自动释放被占用的端口
-function free_port() {
+# 仅释放指定端口，跳过 sshd / nginx 自身，避免误杀
+free_port() {
     local port=$1
-    # 提取占用该端口的进程 PID (兼容多种 ss 输出格式)
     local pids
-    pids=$(ss -tlnp 2>/dev/null | grep ":${port}\s" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
-    
-    if [ -n "$pids" ]; then
-        echo -e "${YELLOW}⚠️  检测到端口 $port 被占用 (PID: $pids)，正在自动释放...${NC}"
-        # 1. 先尝试优雅终止
-        kill $pids 2>/dev/null
-        sleep 1
-        
-        # 2. 检查是否已释放，若未释放则强制杀死
-        local remaining
-        remaining=$(ss -tlnp 2>/dev/null | grep ":${port}\s" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
-        if [ -n "$remaining" ]; then
-            echo -e "${YELLOW}   正常终止失败，正在强制杀死进程...${NC}"
-            kill -9 $remaining 2>/dev/null
-            sleep 1
-        fi
-        echo -e "${GREEN}✅ 端口 $port 已成功释放${NC}"
-    fi
+    pids=$(ss -tlnp 2>/dev/null | grep -E ":${port}\s" \
+           | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u \
+           | while read -r pid; do
+               [ -z "$pid" ] && continue
+               local cmd
+               cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+               case "$cmd" in
+                   sshd|nginx|apache2) echo "$pid:skip($cmd)" >&2; continue ;;
+                   *) echo "$pid" ;;
+               esac
+             done)
+    [ -z "$pids" ] && return 0
+    echo -e "${YELLOW}⚠️  端口 $port 被占用 (PID: $(echo $pids | tr '\n' ' '))，尝试释放...${NC}"
+    kill $pids 2>/dev/null || true
+    sleep 1
+    local remaining
+    remaining=$(ss -tlnp 2>/dev/null | grep -E ":${port}\s" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
+    [ -n "$remaining" ] && kill -9 $remaining 2>/dev/null || true
+    sleep 1
+    echo -e "${GREEN}✅ 端口 $port 已处理${NC}"
 }
 
-# 校验端口（1-65535）
-function validate_port() {
-    local port=$1
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-        return 1
-    fi
-    return 0
+validate_port() {
+    [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 
-# 校验域名（支持裸域名、www、* 通配符前缀）
-function validate_domain() {
-    local domain=$1
-    # 去掉可能的 *. 或 www. 前缀再验证
-    local bare_domain
-    bare_domain=$(echo "$domain" | sed -E 's/^(\*\.|www\.)//')
-    local domain_regex='^([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}$'
-    if ! [[ "$bare_domain" =~ $domain_regex ]]; then
-        return 1
-    fi
-    return 0
+validate_domain() {
+    local bare
+    bare=$(echo "$1" | sed -E 's/^(\*\.|www\.)//')
+    [[ "$bare" =~ ^([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}$ ]]
 }
 
-# 校验绝对路径
-function validate_path() {
-    local path=$1
-    if [[ "$path" =~ ^/ ]] && [ ${#path} -gt 1 ]; then
-        return 0
-    fi
-    return 1
+validate_path() {
+    [[ "$1" =~ ^/ ]] && [ ${#1} -gt 1 ]
 }
 
-# 获取公网 IP（带超时和备用方案）
-function get_public_ip() {
+get_public_ip() {
     local ip
-    ip=$(curl -s --connect-timeout 5 --max-time 10 ifconfig.me 2>/dev/null)
-    if [ -z "$ip" ]; then
-        ip=$(curl -s --connect-timeout 5 --max-time 10 ip.sb 2>/dev/null)
-    fi
-    if [ -z "$ip" ]; then
-        ip=$(curl -s --connect-timeout 5 --max-time 10 api.ipify.org 2>/dev/null)
-    fi
-    if [ -z "$ip" ]; then
-        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-    fi
-    echo "$ip"
+    ip=$(curl -s --connect-timeout 5 --max-time 10 ifconfig.me 2>/dev/null || true)
+    [ -z "$ip" ] && ip=$(curl -s --connect-timeout 5 --max-time 10 ip.sb 2>/dev/null || true)
+    [ -z "$ip" ] && ip=$(curl -s --connect-timeout 5 --max-time 10 api.ipify.org 2>/dev/null || true)
+    [ -z "$ip" ] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    echo "${ip:-unknown}"
 }
 
-# -------------------- DNS 修复函数 --------------------
-function fix_dns() {
-    echo -e "${YELLOW}========================================${NC}"
-    echo -e "${GREEN}       DNS 修复（可选）${NC}"
-    echo -e "${YELLOW}========================================${NC}"
-    echo "当前 DNS 配置："
-    cat /etc/resolv.conf 2>/dev/null || echo "无法读取 /etc/resolv.conf"
-    echo ""
-    read -p "是否修复 DNS（使用阿里云+Google DNS）？(y/n): " dns_fix
-    if [[ "$dns_fix" =~ ^[Yy]$ ]]; then
-        [ -f /etc/resolv.conf ] && cp /etc/resolv.conf /etc/resolv.conf.bak.$(date +%s)
-
-        if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-            echo -e "${YELLOW}检测到 systemd-resolved 正在运行，使用 resolvectl 配置${NC}"
-            local iface
-            iface=$(ip route | awk '/default/ {print $5; exit}')
-            if [ -n "$iface" ]; then
-                resolvectl dns "$iface" 223.5.5.5 223.6.6.6 8.8.8.8 8.8.4.4 2>/dev/null || true
-            fi
+# apt 幂等安装
+apt_ensure() {
+    for pkg in "$@"; do
+        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+            apt-get install -y "$pkg"
         fi
+    done
+}
 
+# -------------------- DNS 修复 --------------------
+fix_dns() {
+    echo -e "${YELLOW}=========== DNS 修复（可选）===========${NC}"
+    cat /etc/resolv.conf 2>/dev/null || echo "无法读取 resolv.conf"
+    read -rp "是否修复 DNS（阿里云+Google）？(y/n): " dns_fix
+    if [[ "$dns_fix" =~ ^[Yy]$ ]]; then
+        cp -f /etc/resolv.conf "/etc/resolv.conf.bak.$(date +%s)" 2>/dev/null || true
+        if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+            local iface; iface=$(ip route | awk '/default/ {print $5; exit}')
+            [ -n "$iface" ] && resolvectl dns "$iface" 223.5.5.5 8.8.8.8 2>/dev/null || true
+        fi
         cat > /etc/resolv.conf <<EOF
 # 由部署脚本生成 $(date)
 nameserver 223.5.5.5
@@ -141,256 +103,146 @@ nameserver 8.8.8.8
 nameserver 8.8.4.4
 EOF
         echo -e "${GREEN}DNS 已修复${NC}"
-        echo -e "${YELLOW}提示：未锁定文件，重启后可能被覆盖。如需永久生效，建议配置 systemd-resolved 或 NetworkManager${NC}"
     else
-        echo -e "${YELLOW}跳过 DNS 修复${NC}"
+        echo -e "${YELLOW}跳过${NC}"
     fi
 }
 
-# -------------------- 前置通用优化 --------------------
-function setup_environment() {
-    echo -e "${YELLOW}[前置任务] 系统环境优化${NC}"
-    fix_dns
-    echo -e "${GREEN}环境优化完成${NC}"
-}
+# -------------------- Nginx HTTPS 部署 --------------------
+install_nginx_https() {
+    echo -e "${GREEN}=========== Nginx HTTPS 部署 v4.0 ===========${NC}"
 
-# -------------------- 功能1：Nginx HTTPS 部署 --------------------
-function install_nginx_https() {
-    echo -e "${YELLOW}========================================${NC}"
-    echo -e "${GREEN}   Nginx HTTPS 一键部署（增强版）${NC}"
-    echo -e "${YELLOW}========================================${NC}"
+    read -rp "主域名（如 ai.movemama.cn 或 example.com）: " DOMAIN
+    read -rp "邮箱（用于证书提醒）: " EMAIL
+    [ -z "$DOMAIN" ] || [ -z "$EMAIL" ] && { echo -e "${RED}域名/邮箱不能为空${NC}"; return 1; }
+    validate_domain "$DOMAIN" || { echo -e "${RED}域名格式不正确${NC}"; return 1; }
 
-    read -p "请输入你的主域名（例如 example.com 或 www.example.com）: " DOMAIN
-    read -p "请输入你的邮箱（用于证书提醒）: " EMAIL
-
-    if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
-        echo -e "${RED}域名和邮箱不能为空！${NC}"
-        return 1
-    fi
-
-    if ! validate_domain "$DOMAIN"; then
-        echo -e "${RED}域名格式不正确${NC}"
-        return 1
-    fi
-
-    # ---------- 多域名 / 泛域名处理 ----------
-    # 提取裸域名（去掉 www. 和 *. 前缀）
     local BARE_DOMAIN
     BARE_DOMAIN=$(echo "$DOMAIN" | sed -E 's/^(www\.|\*\.)//')
 
-    local CERT_DOMAINS=()          # certbot -d 参数列表
-    local NGINX_SERVER_NAMES=()    # Nginx server_name 列表
+    local CERT_DOMAINS=() NGINX_SERVER_NAMES=()
 
-    echo ""
-    echo -e "${YELLOW}┌─────────────────────────────────────┐${NC}"
-    echo -e "${YELLOW}│        🌐 多域名 / 泛域名配置        │${NC}"
-    echo -e "${YELLOW}└─────────────────────────────────────┘${NC}"
-    echo ""
-    echo -e "${BLUE}你的主域名：${GREEN}$DOMAIN${NC}"
-    echo -e "${BLUE}裸域名（去掉 www/* 后）：${GREEN}$BARE_DOMAIN${NC}"
-    echo ""
-
-    # 第一步：询问是否需要泛域名通配符证书
-    local USE_WILDCARD="n"
     echo -e "${YELLOW}━━━ 泛域名通配符证书 ━━━${NC}"
-    echo -e "泛域名证书可一次覆盖 *.${BARE_DOMAIN} 下的所有子域名"
-    echo -e "（如 a.${BARE_DOMAIN}、b.${BARE_DOMAIN}、c.${BARE_DOMAIN} 等全部生效）"
-    echo -e "${RED}⚠  泛域名证书必须使用 DNS 验证（手动添加 TXT 记录）${NC}"
-    echo -e "${RED}   不支持 HTTP 验证方式，需要你到 DNS 后台添加一条 TXT 记录${NC}"
-    echo ""
-    read -p "是否申请泛域名通配符证书 *.${BARE_DOMAIN}？(y/n，默认 n): " USE_WILDCARD
+    echo -e "泛域名证书覆盖 *.${BARE_DOMAIN}，${RED}必须 DNS 验证${NC}。"
+    echo -e "如需自动续期，须配置 DNS API hook（阿里云/Cloudflare），否则每次续期都要手动加 TXT。"
+    read -rp "是否申请泛域名 *.${BARE_DOMAIN}？(y/n 默认 n): " USE_WILDCARD
 
     if [[ "$USE_WILDCARD" =~ ^[Yy]$ ]]; then
-        CERT_DOMAINS+=("*.${BARE_DOMAIN}")
-        CERT_DOMAINS+=("${BARE_DOMAIN}")
-        NGINX_SERVER_NAMES+=("*.${BARE_DOMAIN}")
-        NGINX_SERVER_NAMES+=("${BARE_DOMAIN}")
-        echo -e "${GREEN}✅ 将申请泛域名证书：*.$BARE_DOMAIN + $BARE_DOMAIN${NC}"
-        echo ""
+        CERT_DOMAINS+=("*.${BARE_DOMAIN}" "${BARE_DOMAIN}")
+        NGINX_SERVER_NAMES+=("*.${BARE_DOMAIN}" "${BARE_DOMAIN}")
     else
-        # 不搞泛域名 → 智能匹配主域名 + www
-        CERT_DOMAINS+=("${DOMAIN}")
-        NGINX_SERVER_NAMES+=("${DOMAIN}")
-
-        # 如果用户输入的是裸域名（非 www 开头），自动反问是否加 www
+        CERT_DOMAINS+=("$DOMAIN"); NGINX_SERVER_NAMES+=("$DOMAIN")
         if [[ ! "$DOMAIN" =~ ^www\. ]]; then
-            read -p "是否同时添加 www.${BARE_DOMAIN}？(y/n，默认 y): " ADD_WWW
-            if [[ ! "$ADD_WWW" =~ ^[Nn]$ ]]; then
-                CERT_DOMAINS+=("www.${BARE_DOMAIN}")
-                NGINX_SERVER_NAMES+=("www.${BARE_DOMAIN}")
-                echo -e "${GREEN}✅ 已添加 www.$BARE_DOMAIN${NC}"
-            fi
+            read -rp "同时添加 www.${BARE_DOMAIN}？(y/n 默认 y): " ADD_WWW
+            [[ ! "$ADD_WWW" =~ ^[Nn]$ ]] && { CERT_DOMAINS+=("www.${BARE_DOMAIN}"); NGINX_SERVER_NAMES+=("www.${BARE_DOMAIN}"); }
         else
-            # 用户输入的是 www 开头，反问是否加裸域名
-            read -p "是否同时添加裸域名 ${BARE_DOMAIN}？(y/n，默认 y): " ADD_BARE
-            if [[ ! "$ADD_BARE" =~ ^[Nn]$ ]]; then
-                CERT_DOMAINS+=("${BARE_DOMAIN}")
-                NGINX_SERVER_NAMES+=("${BARE_DOMAIN}")
-                echo -e "${GREEN}✅ 已添加 $BARE_DOMAIN${NC}"
-            fi
+            read -rp "同时添加裸域名 ${BARE_DOMAIN}？(y/n 默认 y): " ADD_BARE
+            [[ ! "$ADD_BARE" =~ ^[Nn]$ ]] && { CERT_DOMAINS+=("${BARE_DOMAIN}"); NGINX_SERVER_NAMES+=("${BARE_DOMAIN}"); }
         fi
-        echo ""
     fi
 
-    # 第二步：询问是否需要额外子域名
-    echo -e "${YELLOW}━━━ 额外子域名 ━━━${NC}"
-    echo -e "如果你还需要其他子域名（如 api.${BARE_DOMAIN}、cdn.${BARE_DOMAIN}），"
-    echo -e "可以在此逐个添加。直接回车跳过。"
-    echo ""
+    echo -e "${YELLOW}━━━ 额外子域名（回车跳过）━━━${NC}"
     while true; do
-        read -p "添加额外子域名（直接回车跳过）: " EXTRA_SUB
-        if [ -z "$EXTRA_SUB" ]; then
-            break
-        fi
-        # 如果用户只输入了子域名前缀（如 api），自动补全
-        if [[ ! "$EXTRA_SUB" =~ \. ]]; then
-            EXTRA_SUB="${EXTRA_SUB}.${BARE_DOMAIN}"
-        fi
-        # 避免重复
-        local already_exists="n"
-        for d in "${CERT_DOMAINS[@]}"; do
-            if [ "$d" == "$EXTRA_SUB" ]; then
-                already_exists="y"
-                break
-            fi
-        done
-        if [ "$already_exists" == "y" ]; then
-            echo -e "${YELLOW}⚠  $EXTRA_SUB 已在列表中，跳过${NC}"
+        read -rp "添加子域名: " EXTRA_SUB
+        [ -z "$EXTRA_SUB" ] && break
+        [[ ! "$EXTRA_SUB" =~ \. ]] && EXTRA_SUB="${EXTRA_SUB}.${BARE_DOMAIN}"
+        local dup=n
+        for d in "${CERT_DOMAINS[@]}"; do [ "$d" == "$EXTRA_SUB" ] && dup=y && break; done
+        if [ "$dup" == n ]; then
+            CERT_DOMAINS+=("$EXTRA_SUB"); NGINX_SERVER_NAMES+=("$EXTRA_SUB")
+            echo -e "${GREEN}✅ 已加 $EXTRA_SUB${NC}"
         else
-            CERT_DOMAINS+=("$EXTRA_SUB")
-            NGINX_SERVER_NAMES+=("$EXTRA_SUB")
-            echo -e "${GREEN}✅ 已添加 $EXTRA_SUB${NC}"
+            echo -e "${YELLOW}⚠  已存在，跳过${NC}"
         fi
     done
 
-    # 汇总确认
-    echo ""
-    echo -e "${YELLOW}┌─────────────────────────────────────┐${NC}"
-    echo -e "${YELLOW}│           📋 证书域名汇总            │${NC}"
-    echo -e "${YELLOW}└─────────────────────────────────────┘${NC}"
+    echo -e "${YELLOW}━━━ 证书域名汇总 ━━━${NC}"
     local CERT_LIST=""
-    for d in "${CERT_DOMAINS[@]}"; do
-        echo -e "  🔒 $d"
-        CERT_LIST="$CERT_LIST -d $d"
-    done
-    echo ""
-    read -p "确认以上域名列表？(y/n，默认 y): " CONFIRM_DOMAINS
-    if [[ "$CONFIRM_DOMAINS" =~ ^[Nn]$ ]]; then
-        echo -e "${YELLOW}已取消，返回主菜单${NC}"
-        return 0
-    fi
+    for d in "${CERT_DOMAINS[@]}"; do echo -e "  🔒 $d"; CERT_LIST="$CERT_LIST -d $d"; done
+    read -rp "确认？(y/n 默认 y): " CONFIRM_DOMAINS
+    [[ "$CONFIRM_DOMAINS" =~ ^[Nn]$ ]] && { echo -e "${YELLOW}已取消${NC}"; return 0; }
 
-    # ✅ 自动释放 80 和 443 端口
-    free_port 80
-    free_port 443
+    free_port 80; free_port 443
 
-    echo -e "${BLUE}请选择部署模式：${NC}"
-    echo "  1) 静态文件托管（自定义本地目录）"
-    echo "  2) 反向代理（转发到任意 URL / IP:端口）"
-    read -p "请输入数字 [1 或 2]: " MODE
+    echo -e "${BLUE}部署模式：${NC}"
+    echo "  1) 静态文件托管"
+    echo "  2) 普通反向代理"
+    echo "  3) AI 反向代理（SSE 流式 + WebSocket + 长超时，推荐 LLM 场景）"
+    read -rp "请输入 [1/2/3 默认 3]: " MODE
+    MODE="${MODE:-3}"
 
-    local DEPLOY_MODE=""
-    local STATIC_PATH=""
-    local BACKEND=""
-
-    if [ "$MODE" == "1" ]; then
-        DEPLOY_MODE="static"
-        read -p "请输入静态文件存放的绝对路径（例如 /home/user/www）: " STATIC_PATH
-        if ! validate_path "$STATIC_PATH"; then
-            echo -e "${RED}路径必须是绝对路径！${NC}"
-            return 1
-        fi
-        if [ ! -d "$STATIC_PATH" ]; then
+    local DEPLOY_MODE STATIC_PATH BACKEND
+    case "$MODE" in
+        1)
+            DEPLOY_MODE="static"
+            read -rp "静态文件绝对路径（如 /var/www/html）: " STATIC_PATH
+            validate_path "$STATIC_PATH" || { echo -e "${RED}需绝对路径${NC}"; return 1; }
             mkdir -p "$STATIC_PATH"
-            echo -e "${YELLOW}目录 $STATIC_PATH 不存在，已自动创建${NC}"
-        fi
-        chown -R www-data:www-data "$STATIC_PATH" 2>/dev/null || true
-        chmod -R 755 "$STATIC_PATH"
-        if [ ! -f "$STATIC_PATH/index.html" ]; then
-            cat > "$STATIC_PATH/index.html" <<EOF
-<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>$BARE_DOMAIN</title></head>
-<body><h1>🎉 静态网站已就绪！</h1><p>域名: $BARE_DOMAIN</p><p>目录: $STATIC_PATH</p></body></html>
+            chown -R www-data:www-data "$STATIC_PATH" 2>/dev/null || true
+            chmod -R 755 "$STATIC_PATH"
+            [ ! -f "$STATIC_PATH/index.html" ] && cat > "$STATIC_PATH/index.html" <<EOF
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>$BARE_DOMAIN</title></head>
+<body><h1>🎉 就绪</h1><p>$BARE_DOMAIN</p></body></html>
 EOF
-        fi
-        echo -e "${GREEN}静态文件模式，根目录：$STATIC_PATH${NC}"
+            ;;
+        2|3)
+            DEPLOY_MODE=$([ "$MODE" == 3 ] && echo "ai_proxy" || echo "proxy")
+            [ "$MODE" == 3 ] && echo -e "${YELLOW}AI 反代：后端建议为 http://127.0.0.1:PORT${NC}"
+            read -rp "后端目标地址（如 http://127.0.0.1:3000）: " BACKEND
+            [ -z "$BACKEND" ] && { echo -e "${RED}不能为空${NC}"; return 1; }
+            [[ ! "$BACKEND" =~ ^https?:// ]] && BACKEND="http://$BACKEND"
+            ;;
+        *) echo -e "${RED}无效选择${NC}"; return 1 ;;
+    esac
 
-    elif [ "$MODE" == "2" ]; then
-        DEPLOY_MODE="proxy"
-        read -p "请输入后端目标地址（支持 http://IP:端口、https://域名 等）: " BACKEND
-        if [ -z "$BACKEND" ]; then
-            echo -e "${RED}目标地址不能为空！${NC}"
-            return 1
-        fi
-        if [[ ! "$BACKEND" =~ ^https?:// ]]; then
-            BACKEND="http://$BACKEND"
-        fi
-        echo -e "${GREEN}反向代理模式，转发到：$BACKEND${NC}"
-    else
-        echo -e "${RED}无效选择，退出${NC}"
-        return 1
-    fi
+    echo -e "${BLUE}安装依赖...${NC}"
+    apt-get update -qq
+    apt_ensure curl wget nginx certbot python3-certbot-nginx ufw
+    mkdir -p /var/www/html
 
-    echo -e "${BLUE}正在安装 Nginx 和 Certbot...${NC}"
-    apt install -y curl wget nginx certbot python3-certbot-nginx ufw
-
-    # 构建 server_name 字符串（空格分隔）
     local SERVER_NAME_STR
     SERVER_NAME_STR=$(IFS=' '; echo "${NGINX_SERVER_NAMES[*]}")
+    local NGINX_CONF="/etc/nginx/sites-available/$BARE_DOMAIN"
 
-    NGINX_CONF="/etc/nginx/sites-available/$BARE_DOMAIN"
-    if [ -f "$NGINX_CONF" ]; then
-        cp "$NGINX_CONF" "${NGINX_CONF}.bak.$(date +%s)"
-        echo -e "${YELLOW}已备份原有配置${NC}"
-    fi
+    [ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak.$(date +%s)" && echo -e "${YELLOW}已备份旧配置${NC}"
 
-    if [ "$DEPLOY_MODE" == "static" ]; then
+    # —— 生成 HTTP 配置（含 ACME 验证路径，用 ^~ 保证优先级）——
+    generate_http_conf() {
         cat > "$NGINX_CONF" <<EOF
 server {
     listen 80;
     listen [::]:80;
     server_name $SERVER_NAME_STR;
+    server_tokens off;
+
+    # ACME HTTP-01 验证：^~ 前缀优先级最高，不被 location / 抢
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+        allow all;
+    }
+EOF
+        if [ "$DEPLOY_MODE" == "static" ]; then
+            cat >> "$NGINX_CONF" <<EOF
     root $STATIC_PATH;
     index index.html index.htm;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
+    location / { try_files \$uri \$uri/ =404; }
 }
 EOF
-    else
-        cat > "$NGINX_CONF" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $SERVER_NAME_STR;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location / {
-        proxy_pass $BACKEND;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
+        else
+            cat >> "$NGINX_CONF" <<EOF
+    location / { return 301 https://\$host\$request_uri; }
 }
 EOF
-    fi
+        fi
+    }
+    generate_http_conf
 
+    # 清理默认站点，避免 80 端口 default_server 冲突
+    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 
-    if ! nginx -t; then
-        echo -e "${RED}Nginx 配置测试失败！${NC}"
-        return 1
-    fi
-
+    nginx -t
     systemctl restart nginx
     systemctl enable nginx
 
@@ -399,217 +251,241 @@ EOF
     ufw allow 443/tcp 2>/dev/null || true
     ufw --force enable 2>/dev/null || true
 
-    echo -e "${BLUE}正在申请 SSL 证书...${NC}"
-
+    echo -e "${BLUE}申请 SSL 证书...${NC}"
+    local CERT_OK=0
     if [[ "$USE_WILDCARD" =~ ^[Yy]$ ]]; then
-        # 泛域名证书 → 使用 DNS 手动验证
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${YELLOW}  泛域名证书需要 DNS 验证${NC}"
+        echo -e "${YELLOW}泛域名证书需 DNS 验证${NC}"
+        echo -e "请到 DNS 后台为 ${GREEN}_acme-challenge.${BARE_DOMAIN}${NC} 添加 TXT 记录"
+        echo -e "${RED}注意：手动模式续期时仍需人工干预，建议改用 --manual-auth-hook 接 DNS API${NC}"
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "接下来 certbot 会提示你添加一条 ${GREEN}_acme-challenge.${BARE_DOMAIN}${NC} 的 TXT 记录"
-        echo -e "请到你的域名 DNS 管理后台添加，${RED}等待 DNS 生效后再按回车继续${NC}"
-        echo ""
-        read -p "准备好了吗？按回车开始申请证书..."
+        read -rp "准备好按回车开始: "
+        if certbot certonly --manual --preferred-challenges dns \
+            --agree-tos --no-eff-email --email "$EMAIL" \
+            --keep-until-expiring $CERT_LIST; then
+            CERT_OK=1
+        fi
+    else
+        # webroot 模式：不动 nginx 配置，仅取证书
+        if certbot certonly --webroot -w /var/www/html \
+            --agree-tos --no-eff-email --email "$EMAIL" \
+            --non-interactive --keep-until-expiring $CERT_LIST; then
+            CERT_OK=1
+        fi
+    fi
 
-        certbot certonly --manual \
-            --preferred-challenges dns \
-            --agree-tos --no-eff-email \
-            --email "$EMAIL" \
-            --keep-until-expiring \
-            $CERT_LIST
+    [ "$CERT_OK" -ne 1 ] && { echo -e "${RED}证书申请失败${NC}"; return 1; }
 
-        if [ $? -eq 0 ]; then
-            # 手动创建带 SSL 的 Nginx 配置
-            local SSL_CONF="/etc/nginx/sites-available/${BARE_DOMAIN}-ssl"
-            if [ "$DEPLOY_MODE" == "static" ]; then
-                cat > "$SSL_CONF" <<EOF
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name $SERVER_NAME_STR;
-
-    ssl_certificate     /etc/letsencrypt/live/${BARE_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${BARE_DOMAIN}/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    root $STATIC_PATH;
-    index index.html index.htm;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-}
-
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $SERVER_NAME_STR;
-    return 301 https://\$host\$request_uri;
+    # —— 生成 HTTPS 配置 ——
+    generate_https_conf() {
+        local SSL_CONF="/etc/nginx/sites-available/${BARE_DOMAIN}-ssl"
+        local MAP_SNIPPET="/etc/nginx/conf.d/connection_upgrade.map.conf"
+        # 全局 map：SSE/WS 共存的关键
+        if [ ! -f "$MAP_SNIPPET" ]; then
+            cat > "$MAP_SNIPPET" <<'EOF'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      keep-alive;
 }
 EOF
-            else
-                cat > "$SSL_CONF" <<EOF
+        fi
+
+        cat > "$SSL_CONF" <<EOF
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
     server_name $SERVER_NAME_STR;
+    server_tokens off;
 
     ssl_certificate     /etc/letsencrypt/live/${BARE_DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${BARE_DOMAIN}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
 
+    # 安全响应头
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    client_max_body_size 0;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+        allow all;
+    }
+EOF
+        if [ "$DEPLOY_MODE" == "static" ]; then
+            cat >> "$SSL_CONF" <<EOF
+    root $STATIC_PATH;
+    index index.html index.htm;
+    location / { try_files \$uri \$uri/ =404; }
+}
+EOF
+        elif [ "$DEPLOY_MODE" == "proxy" ]; then
+            cat >> "$SSL_CONF" <<EOF
     location / {
         proxy_pass $BACKEND;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 }
+EOF
+        else
+            # —— AI 反向代理模板（对齐生产配置）——
+            cat >> "$SSL_CONF" <<EOF
+    location / {
+        proxy_pass $BACKEND;
 
+        # 透传客户端信息
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        # 超时：AI 推理/流式输出必须拉长
+        proxy_connect_timeout 60s;
+        proxy_send_timeout    600s;
+        proxy_read_timeout    600s;
+
+        # SSE 流式输出：关闭缓冲，否则打字机效果变一次性吐出
+        proxy_buffering         off;
+        proxy_cache             off;
+        proxy_http_version      1.1;
+        proxy_set_header        Connection \$connection_upgrade;
+        proxy_set_header        X-Accel-Buffering no;
+
+        # WebSocket 支持（实时语音/双向通道）
+        proxy_set_header        Upgrade \$http_upgrade;
+
+        # 关闭请求体缓冲，大 JSON/多模态请求体直接流式转发
+        proxy_request_buffering off;
+
+        # gzip 会强制缓冲，流式场景必须关
+        gzip off;
+    }
+}
+EOF
+        fi
+
+        # HTTP -> HTTPS 301（保留 ACME 验证路径）
+        cat >> "$SSL_CONF" <<EOF
 server {
     listen 80;
     listen [::]:80;
     server_name $SERVER_NAME_STR;
-    return 301 https://\$host\$request_uri;
+    server_tokens off;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+        allow all;
+    }
+    location / { return 301 https://\$host\$request_uri; }
 }
 EOF
-            fi
-            ln -sf "$SSL_CONF" /etc/nginx/sites-enabled/
-            rm -f "$NGINX_CONF" /etc/nginx/sites-enabled/$(basename "$NGINX_CONF") 2>/dev/null || true
+        ln -sf "$SSL_CONF" /etc/nginx/sites-enabled/
+        # 移除纯 HTTP 配置，避免重复 server_name
+        rm -f "/etc/nginx/sites-enabled/$(basename "$NGINX_CONF")"
+    }
+    generate_https_conf
 
-            if ! nginx -t; then
-                echo -e "${RED}Nginx SSL 配置测试失败！${NC}"
-                return 1
-            fi
-            systemctl restart nginx
-        else
-            echo -e "${RED}证书申请失败，请检查 DNS TXT 记录是否正确添加${NC}"
-            return 1
-        fi
-    else
-        # 普通多域名证书 → 使用 HTTP 验证
-        certbot --nginx \
-            --agree-tos --no-eff-email \
-            --email "$EMAIL" \
-            --redirect --non-interactive \
-            --keep-until-expiring \
-            $CERT_LIST
-    fi
+    nginx -t
+    systemctl reload nginx
+
+    # —— 续期后自动 reload nginx 的 deploy hook ——
+    local HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
+    mkdir -p "$HOOK_DIR"
+    cat > "$HOOK_DIR/nginx-reload.sh" <<'EOF'
+#!/bin/bash
+# 证书续期成功后自动 reload nginx
+if systemctl reload nginx 2>/dev/null; then
+    echo "[certbot-hook] nginx reloaded" >&2
+else
+    systemctl restart nginx 2>/dev/null || true
+fi
+EOF
+    chmod +x "$HOOK_DIR/nginx-reload.sh"
 
     systemctl enable --now certbot.timer 2>/dev/null || true
 
-    local IP
-    IP=$(get_public_ip)
-
+    local IP; IP=$(get_public_ip)
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN} ✅ Nginx HTTPS 部署完成！${NC}"
-    echo -e "覆盖域名："
-    for d in "${CERT_DOMAINS[@]}"; do
-        echo -e "  🌐 https://$d"
-    done
+    echo -e "${GREEN} ✅ 部署完成${NC}"
+    for d in "${CERT_DOMAINS[@]}"; do echo -e "  🌐 https://$d"; done
     echo -e "服务器IP：$IP"
-    if [ "$DEPLOY_MODE" == "static" ]; then
-        echo -e "静态文件目录：$STATIC_PATH"
-    else
-        echo -e "反向代理目标：$BACKEND"
-    fi
+    case "$DEPLOY_MODE" in
+        static)    echo -e "静态目录：$STATIC_PATH" ;;
+        proxy)     echo -e "反代目标：$BACKEND" ;;
+        ai_proxy)  echo -e "AI 反代目标：$BACKEND（SSE+WS+600s 超时）" ;;
+    esac
     echo -e "${GREEN}========================================${NC}"
 }
 
-# -------------------- 功能2：WebDAV 部署 --------------------
-function install_webdav() {
-    echo -e "${YELLOW}========================================${NC}"
-    echo -e "${GREEN}   Apache WebDAV 一键部署${NC}"
-    echo -e "${YELLOW}========================================${NC}"
+# -------------------- WebDAV --------------------
+install_webdav() {
+    echo -e "${GREEN}=========== Apache WebDAV ===========${NC}"
+    local WEBDAV_DOMAIN="www1.movemama.cn" WEBDAV_USER="movemama"
+    local WEBDAV_PASS="qq123456" WEBDAV_PORT="9520" WEBDAV_ROOT="/var/www/webdav"
 
-    WEBDAV_DOMAIN="www1.movemama.cn"
-    WEBDAV_USER="movemama"
-    WEBDAV_PASS="qq123456"
-    WEBDAV_PORT="9520"
-    WEBDAV_ROOT="/var/www/webdav"
-
-    read -p "请输入域名 [默认 $WEBDAV_DOMAIN]: " input
-    [ -n "$input" ] && WEBDAV_DOMAIN="$input"
-
-    read -p "请输入端口 [默认 $WEBDAV_PORT]: " input
-    [ -n "$input" ] && WEBDAV_PORT="$input"
-
-    read -p "请输入用户名 [默认 $WEBDAV_USER]: " input
-    [ -n "$input" ] && WEBDAV_USER="$input"
-
-    read -p "请输入密码 [默认 $WEBDAV_PASS]: " input
-    [ -n "$input" ] && WEBDAV_PASS="$input"
-
-    read -p "存储目录 [默认 $WEBDAV_ROOT]: " input
-    [ -n "$input" ] && WEBDAV_ROOT="$input"
-
-    if ! validate_port "$WEBDAV_PORT"; then
-        echo -e "${RED}端口必须是 1-65535 的数字${NC}"
-        return 1
+    read -rp "域名 [$WEBDAV_DOMAIN]: " i; [ -n "$i" ] && WEBDAV_DOMAIN="$i"
+    read -rp "端口 [$WEBDAV_PORT]: " i; [ -n "$i" ] && WEBDAV_PORT="$i"
+    read -rp "用户名 [$WEBDAV_USER]: " i; [ -n "$i" ] && WEBDAV_USER="$i"
+    read -rp "密码 [$WEBDAV_PASS]（回车则随机生成）: " i
+    if [ -z "$i" ]; then
+        WEBDAV_PASS=$(openssl rand -base64 18 2>/dev/null || head -c 18 /dev/urandom | base64)
+        echo -e "${GREEN}已生成随机密码：$WEBDAV_PASS${NC}"
+    else
+        WEBDAV_PASS="$i"
     fi
+    read -rp "存储目录 [$WEBDAV_ROOT]: " i; [ -n "$i" ] && WEBDAV_ROOT="$i"
 
-    # ✅ 自动释放 WebDAV 端口
+    validate_port "$WEBDAV_PORT" || { echo -e "${RED}端口非法${NC}"; return 1; }
+    validate_path "$WEBDAV_ROOT" || { echo -e "${RED}需绝对路径${NC}"; return 1; }
+
+    echo -e "域名:$WEBDAV_DOMAIN 端口:$WEBDAV_PORT 用户:$WEBDAV_USER 目录:$WEBDAV_ROOT"
+    read -rp "确认安装？: " c; [[ ! "$c" =~ ^[Yy]$ ]] && return
+
     free_port "$WEBDAV_PORT"
 
-    if ! validate_path "$WEBDAV_ROOT"; then
-        echo -e "${RED}存储目录必须是绝对路径${NC}"
-        return 1
-    fi
-
-    echo -e "${BLUE}配置确认：${NC}"
-    echo -e "域名: $WEBDAV_DOMAIN"
-    echo -e "端口: $WEBDAV_PORT"
-    echo -e "用户: $WEBDAV_USER"
-    echo -e "密码: $WEBDAV_PASS"
-    echo -e "目录: $WEBDAV_ROOT"
-    read -p "确认开始安装？(y/n) " confirm
-    [[ ! "$confirm" =~ ^[Yy]$ ]] && return
-
-    echo -e "${BLUE}正在安装 Apache...${NC}"
-    apt install -y apache2 apache2-utils
-
+    apt-get update -qq
+    apt_ensure apache2 apache2-utils
     a2enmod dav dav_fs auth_basic authn_core authz_core rewrite headers >/dev/null 2>&1 || true
 
-    mkdir -p "$WEBDAV_ROOT"
-    chown -R www-data:www-data "$WEBDAV_ROOT"
+    mkdir -p "$WEBDAV_ROOT" /var/lock/apache2
+    chown -R www-data:www-data "$WEBDAV_ROOT" /var/lock/apache2
     chmod -R 755 "$WEBDAV_ROOT"
 
     htpasswd -cb /etc/apache2/webdav.passwd "$WEBDAV_USER" "$WEBDAV_PASS"
     chmod 640 /etc/apache2/webdav.passwd
     chown root:www-data /etc/apache2/webdav.passwd
 
-    mkdir -p /var/lock/apache2
-    chown www-data:www-data /var/lock/apache2
-
-    if ! grep -qE "^Listen\s+$WEBDAV_PORT(\s|$)" /etc/apache2/ports.conf; then
+    # 幂等：避免重复 append Listen
+    if ! grep -qE "^\s*Listen\s+${WEBDAV_PORT}(\s|$)" /etc/apache2/ports.conf; then
         echo "Listen $WEBDAV_PORT" >> /etc/apache2/ports.conf
-        echo -e "${GREEN}已将 Listen $WEBDAV_PORT 添加到 ports.conf${NC}"
-    else
-        echo -e "${YELLOW}Listen $WEBDAV_PORT 已存在于 ports.conf${NC}"
+        echo -e "${GREEN}已添加 Listen $WEBDAV_PORT${NC}"
     fi
 
-    WEBDAV_CONF="/etc/apache2/sites-available/webdav.conf"
-    if [ -f "$WEBDAV_CONF" ]; then
-        cp "$WEBDAV_CONF" "${WEBDAV_CONF}.bak.$(date +%s)"
-        echo -e "${YELLOW}已备份原有 WebDAV 配置${NC}"
-    fi
-
+    local WEBDAV_CONF="/etc/apache2/sites-available/webdav.conf"
+    [ -f "$WEBDAV_CONF" ] && cp "$WEBDAV_CONF" "${WEBDAV_CONF}.bak.$(date +%s)"
     cat > "$WEBDAV_CONF" <<EOF
 <VirtualHost *:$WEBDAV_PORT>
     ServerName $WEBDAV_DOMAIN
     DocumentRoot $WEBDAV_ROOT
-
     EnableSendfile Off
     EnableMMAP Off
-
     DavLockDB /var/lock/apache2/DAVLock
-
     LimitRequestBody 0
     Timeout 600
-
     <Directory $WEBDAV_ROOT>
         Dav On
         AuthType Basic
@@ -618,11 +494,9 @@ function install_webdav() {
         Require valid-user
         Options Indexes FollowSymLinks MultiViews
         AllowOverride All
-
         Header always set Accept-Ranges "bytes"
         Header always set Access-Control-Allow-Origin "*"
     </Directory>
-
     ErrorLog \${APACHE_LOG_DIR}/webdav_error.log
     CustomLog \${APACHE_LOG_DIR}/webdav_access.log combined
 </VirtualHost>
@@ -630,56 +504,42 @@ EOF
 
     a2ensite webdav.conf
     a2dissite 000-default.conf 2>/dev/null || true
-
-    if ! apache2ctl configtest; then
-        echo -e "${RED}Apache 配置测试失败，请检查${NC}"
-        return 1
-    fi
-
+    apache2ctl configtest
     systemctl restart apache2
     systemctl enable apache2
-
     ufw allow "$WEBDAV_PORT/tcp" 2>/dev/null || true
 
-    local IP
-    IP=$(get_public_ip)
-
+    local IP; IP=$(get_public_ip)
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN} ✅ WebDAV 部署完成！${NC}"
-    echo -e "访问地址：${BLUE}http://$WEBDAV_DOMAIN:$WEBDAV_PORT/${NC}"
-    echo -e "局域网访问：${BLUE}http://$IP:$WEBDAV_PORT/${NC}"
-    echo -e "端口：$WEBDAV_PORT"
-    echo -e "用户名：$WEBDAV_USER  密码：$WEBDAV_PASS"
-    echo -e "服务器IP：$IP"
-    echo -e "${YELLOW}⚠️  请妥善保管密码，密码文件位于：/etc/apache2/webdav.passwd${NC}"
+    echo -e "${GREEN} ✅ WebDAV 完成${NC}"
+    echo -e "访问：http://$WEBDAV_DOMAIN:$WEBDAV_PORT/"
+    echo -e "局域网：http://$IP:$WEBDAV_PORT/"
+    echo -e "用户：$WEBDAV_USER  密码：$WEBDAV_PASS"
+    echo -e "${YELLOW}密码文件：/etc/apache2/webdav.passwd${NC}"
     echo -e "${GREEN}========================================${NC}"
 }
 
 # -------------------- 主菜单 --------------------
-function main_menu() {
+main_menu() {
     while true; do
         echo -e "${YELLOW}========================================${NC}"
-        echo -e "${GREEN}       超级一键部署脚本主菜单${NC}"
+        echo -e "${GREEN}       超级一键部署脚本 v4.0${NC}"
         echo -e "${YELLOW}========================================${NC}"
-        echo "1) 安装 Nginx + HTTPS（静态目录 / 反向代理）"
-        echo "2) 安装 Apache WebDAV 文件服务器"
-        echo "3) 修复 DNS（阿里云 + Google）"
-        echo "4) 退出脚本"
-        echo -e "${YELLOW}========================================${NC}"
-        read -p "请输入数字选择功能: " choice
-
-        case $choice in
-            1) install_nginx_https ;;
-            2) install_webdav ;;
+        echo "1) Nginx + HTTPS（静态 / 普通反代 / AI 反代）"
+        echo "2) Apache WebDAV"
+        echo "3) 修复 DNS"
+        echo "4) 退出"
+        read -rp "选择: " choice
+        case "$choice" in
+            1) install_nginx_https || true ;;
+            2) install_webdav || true ;;
             3) fix_dns ;;
-            4) echo -e "${GREEN}再见！${NC}"; exit 0 ;;
-            *) echo -e "${RED}无效输入，请重新选择${NC}" ;;
+            4) echo -e "${GREEN}再见${NC}"; exit 0 ;;
+            *) echo -e "${RED}无效${NC}" ;;
         esac
-
         echo ""
-        read -p "按回车键返回主菜单..."
+        read -rp "回车返回菜单..."
     done
 }
 
-# 启动主菜单
 main_menu
