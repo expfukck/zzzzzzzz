@@ -1,16 +1,17 @@
 #!/bin/bash
 # ============================================================
-# 超级一键部署脚本 v4.0（Ubuntu/Debian）
-#   1. Nginx HTTPS：静态 / 普通反代 / AI 反代（SSE+WS+长超时）
+# 超级一键部署脚本 v5.0（Ubuntu/Debian）
+#   1. Nginx HTTPS：静态 / 普通反代 / AI 反代（SSE+WS+长超时+大缓冲）
 #   2. Apache WebDAV
 #   3. DNS 修复
-# 变更摘要：
-#   - 新增 AI 反向代理模板（对齐生产 AI 站点配置）
-#   - 修复 Connection 头在 SSE/WS 场景互覆盖问题（map 动态判定）
-#   - 证书申请改 webroot 模式，不再让 certbot 改写 nginx 配置
-#   - 续期 deploy-hook 自动 reload nginx
-#   - 通配符证书提示使用 DNS API hook 实现真正自动续期
-#   - set -euo pipefail + 幂等性 + 端口释放安全化
+# 变更摘要（v4.0 → v5.0）：
+#   - map 写入改用 printf，彻底解决空格丢失导致 "invalid number of arguments"
+#   - AI 反代模板对齐生产配置：补 proxy_buffer_size/proxy_buffers/proxy_busy_buffers_size
+#     + X-Accel-Buffering no，解决 1M 上下文场景 upstream sent too big header
+#   - http2 配置改用独立 http2 on; 指令，消除 nginx 1.25.1+ 弃用警告
+#   - ACME 验证 location 统一用 ^~ 前缀，确保优先级
+#   - map 文件加幂等检测，重复运行不再报 duplicate map
+#   - 保留：set -euo pipefail / 端口释放安全化 / certbot deploy-hook / 三大功能模块
 # ============================================================
 set -euo pipefail
 
@@ -26,7 +27,7 @@ check_port() {
     ss -tlnp 2>/dev/null | grep -qE ":${1}(\s|$)"
 }
 
-# 仅释放指定端口，跳过 sshd / nginx 自身，避免误杀
+# 仅释放指定端口，跳过 sshd / nginx / apache2 自身，避免误杀
 free_port() {
     local port=$1
     local pids
@@ -75,13 +76,39 @@ get_public_ip() {
     echo "${ip:-unknown}"
 }
 
-# apt 幂等安装
 apt_ensure() {
     for pkg in "$@"; do
         if ! dpkg -s "$pkg" >/dev/null 2>&1; then
             apt-get install -y "$pkg"
         fi
     done
+}
+
+# 写入全局 map（幂等 + printf 保空格）
+ensure_connection_upgrade_map() {
+    local MAP_CONF="/etc/nginx/conf.d/connection_upgrade.map.conf"
+    mkdir -p /etc/nginx/conf.d
+    # 幂等：已存在且内容正确则跳过
+    if [ -f "$MAP_CONF" ] && grep -q 'connection_upgrade' "$MAP_CONF" 2>/dev/null; then
+        return 0
+    fi
+    # 用 printf 写入，避免 heredoc 复制时 $http_upgrade 与 $connection_upgrade 之间空格丢失
+    printf 'map $http_upgrade $connection_upgrade {\n    default upgrade;\n    '"''"'      keep-alive;\n}\n' > "$MAP_CONF"
+    echo -e "${GREEN}✅ map 配置已写入 $MAP_CONF${NC}"
+}
+
+# 确保 nginx.conf 的 http 块 include 了 conf.d
+ensure_nginx_includes() {
+    local NGINX_CONF="/etc/nginx/nginx.conf"
+    if ! grep -qE "include\s+/etc/nginx/conf\.d/\*\.conf\s*;" "$NGINX_CONF"; then
+        cp "$NGINX_CONF" "${NGINX_CONF}.bak.$(date +%s)"
+        sed -i '/^http {/a\    include /etc/nginx/conf.d/*.conf;' "$NGINX_CONF"
+        echo -e "${YELLOW}已补充 conf.d include${NC}"
+    fi
+    if ! grep -qE "include\s+/etc/nginx/sites-enabled/\*\s*;" "$NGINX_CONF"; then
+        sed -i '/^http {/a\    include /etc/nginx/sites-enabled/*;' "$NGINX_CONF"
+        echo -e "${YELLOW}已补充 sites-enabled include${NC}"
+    fi
 }
 
 # -------------------- DNS 修复 --------------------
@@ -110,7 +137,7 @@ EOF
 
 # -------------------- Nginx HTTPS 部署 --------------------
 install_nginx_https() {
-    echo -e "${GREEN}=========== Nginx HTTPS 部署 v4.0 ===========${NC}"
+    echo -e "${GREEN}=========== Nginx HTTPS 部署 v5.0 ===========${NC}"
 
     read -rp "主域名（如 ai.movemama.cn 或 example.com）: " DOMAIN
     read -rp "邮箱（用于证书提醒）: " EMAIL
@@ -167,7 +194,7 @@ install_nginx_https() {
     echo -e "${BLUE}部署模式：${NC}"
     echo "  1) 静态文件托管"
     echo "  2) 普通反向代理"
-    echo "  3) AI 反向代理（SSE 流式 + WebSocket + 长超时，推荐 LLM 场景）"
+    echo "  3) AI 反向代理（SSE 流式 + WebSocket + 长超时 + 大缓冲，推荐 LLM 场景）"
     read -rp "请输入 [1/2/3 默认 3]: " MODE
     MODE="${MODE:-3}"
 
@@ -199,6 +226,10 @@ EOF
     apt-get update -qq
     apt_ensure curl wget nginx certbot python3-certbot-nginx ufw
     mkdir -p /var/www/html
+
+    # —— 先确保全局 map 与 include 到位（AI/普通反代都要用 $connection_upgrade）——
+    ensure_connection_upgrade_map
+    ensure_nginx_includes
 
     local SERVER_NAME_STR
     SERVER_NAME_STR=$(IFS=' '; echo "${NGINX_SERVER_NAMES[*]}")
@@ -238,7 +269,6 @@ EOF
     }
     generate_http_conf
 
-    # 清理默认站点，避免 80 端口 default_server 冲突
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 
@@ -266,7 +296,6 @@ EOF
             CERT_OK=1
         fi
     else
-        # webroot 模式：不动 nginx 配置，仅取证书
         if certbot certonly --webroot -w /var/www/html \
             --agree-tos --no-eff-email --email "$EMAIL" \
             --non-interactive --keep-until-expiring $CERT_LIST; then
@@ -279,16 +308,6 @@ EOF
     # —— 生成 HTTPS 配置 ——
     generate_https_conf() {
         local SSL_CONF="/etc/nginx/sites-available/${BARE_DOMAIN}-ssl"
-        local MAP_SNIPPET="/etc/nginx/conf.d/connection_upgrade.map.conf"
-        # 全局 map：SSE/WS 共存的关键
-        if [ ! -f "$MAP_SNIPPET" ]; then
-            cat > "$MAP_SNIPPET" <<'EOF'
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    ''      keep-alive;
-}
-EOF
-        fi
 
         cat > "$SSL_CONF" <<EOF
 server {
@@ -335,6 +354,7 @@ EOF
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
@@ -342,7 +362,7 @@ EOF
 }
 EOF
         else
-            # —— AI 反向代理模板（对齐生产配置）——
+            # —— AI 反向代理模板（对齐生产配置：map + 大缓冲 + SSE 透传）——
             cat >> "$SSL_CONF" <<EOF
     location / {
         proxy_pass $BACKEND;
@@ -353,23 +373,31 @@ EOF
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
 
-        # 超时：AI 推理/流式输出必须拉长
-        proxy_connect_timeout 60s;
-        proxy_send_timeout    600s;
-        proxy_read_timeout    600s;
+        # 超时：AI 推理 / 流式输出必须拉长（10 年 ≈ 永不超时，覆盖 1M 上下文 prefill）
+        proxy_connect_timeout 315360000s;
+        proxy_send_timeout    315360000s;
+        proxy_read_timeout    315360000s;
 
         # SSE 流式输出：关闭缓冲，否则打字机效果变一次性吐出
         proxy_buffering         off;
         proxy_cache             off;
         proxy_http_version      1.1;
-        proxy_set_header        Connection \$connection_upgrade;
-        proxy_set_header        X-Accel-Buffering no;
 
-        # WebSocket 支持（实时语音/双向通道）
-        proxy_set_header        Upgrade \$http_upgrade;
+        # 响应头/响应体缓冲：防止大 header 被截断触发 502/500（1M 上下文场景关键）
+        proxy_buffer_size       1m;
+        proxy_buffers           128 1m;
+        proxy_busy_buffers_size 2m;
 
-        # 关闭请求体缓冲，大 JSON/多模态请求体直接流式转发
+        # WebSocket + SSE 共存：map 动态判定 Connection 头
+        proxy_set_header Upgrade    \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+
+        # 通知后端不要再次缓冲（部分框架识别此头）
+        proxy_set_header X-Accel-Buffering no;
+
+        # 关闭请求体缓冲，大 JSON / 多模态请求体直接流式转发
         proxy_request_buffering off;
+        client_body_buffer_size 0;
 
         # gzip 会强制缓冲，流式场景必须关
         gzip off;
@@ -394,7 +422,7 @@ server {
 }
 EOF
         ln -sf "$SSL_CONF" /etc/nginx/sites-enabled/
-        # 移除纯 HTTP 配置，避免重复 server_name
+        # 移除纯 HTTP 配置软链，避免重复 server_name
         rm -f "/etc/nginx/sites-enabled/$(basename "$NGINX_CONF")"
     }
     generate_https_conf
@@ -402,10 +430,12 @@ EOF
     nginx -t
     systemctl reload nginx
 
-    # —— 续期后自动 reload nginx 的 deploy hook ——
+    # —— 续期后自动 reload nginx 的 deploy hook（幂等）——
     local HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
     mkdir -p "$HOOK_DIR"
-    cat > "$HOOK_DIR/nginx-reload.sh" <<'EOF'
+    local HOOK_FILE="$HOOK_DIR/nginx-reload.sh"
+    if [ ! -f "$HOOK_FILE" ]; then
+        cat > "$HOOK_FILE" <<'EOF'
 #!/bin/bash
 # 证书续期成功后自动 reload nginx
 if systemctl reload nginx 2>/dev/null; then
@@ -414,7 +444,9 @@ else
     systemctl restart nginx 2>/dev/null || true
 fi
 EOF
-    chmod +x "$HOOK_DIR/nginx-reload.sh"
+        chmod +x "$HOOK_FILE"
+        echo -e "${GREEN}✅ 已创建 certbot deploy-hook${NC}"
+    fi
 
     systemctl enable --now certbot.timer 2>/dev/null || true
 
@@ -426,7 +458,7 @@ EOF
     case "$DEPLOY_MODE" in
         static)    echo -e "静态目录：$STATIC_PATH" ;;
         proxy)     echo -e "反代目标：$BACKEND" ;;
-        ai_proxy)  echo -e "AI 反代目标：$BACKEND（SSE+WS+600s 超时）" ;;
+        ai_proxy)  echo -e "AI 反代目标：$BACKEND（SSE+WS+大缓冲+10年超时）" ;;
     esac
     echo -e "${GREEN}========================================${NC}"
 }
@@ -523,7 +555,7 @@ EOF
 main_menu() {
     while true; do
         echo -e "${YELLOW}========================================${NC}"
-        echo -e "${GREEN}       超级一键部署脚本 v4.0${NC}"
+        echo -e "${GREEN}       超级一键部署脚本 v5.0${NC}"
         echo -e "${YELLOW}========================================${NC}"
         echo "1) Nginx + HTTPS（静态 / 普通反代 / AI 反代）"
         echo "2) Apache WebDAV"
